@@ -1,0 +1,79 @@
+import uuid
+from datetime import datetime
+
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Uuid, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from db import Base
+
+
+class Match(Base):
+    __tablename__ = "matches"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    map_name: Mapped[str] = mapped_column(String)
+    duration: Mapped[str] = mapped_column(String)
+    mode: Mapped[str] = mapped_column(String)
+    queue_type: Mapped[str] = mapped_column(String)
+    result: Mapped[str] = mapped_column(String)
+    played_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    player_stats: Mapped[list["PlayerStat"]] = relationship(
+        back_populates="match", cascade="all, delete-orphan"
+    )
+
+
+class PlayerStat(Base):
+    __tablename__ = "player_stats"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    match_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("matches.id", ondelete="CASCADE")
+    )
+    team: Mapped[str] = mapped_column(String)
+    role: Mapped[str] = mapped_column(String)
+    player_name: Mapped[str] = mapped_column(String)
+    eliminations: Mapped[int | None] = mapped_column(Integer)
+    assists: Mapped[int | None] = mapped_column(Integer)
+    deaths: Mapped[int | None] = mapped_column(Integer)
+    damage: Mapped[int | None] = mapped_column(Integer)
+    healing: Mapped[int | None] = mapped_column(Integer)
+    mitigation: Mapped[int | None] = mapped_column(Integer)
+    is_self: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    match: Mapped["Match"] = relationship(back_populates="player_stats")
+    hero_stat: Mapped["HeroStat | None"] = relationship(
+        back_populates="player_stat", cascade="all, delete-orphan", uselist=False
+    )
+
+
+class HeroStat(Base):
+    __tablename__ = "hero_stats"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    player_stat_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("player_stats.id", ondelete="CASCADE"), unique=True
+    )
+    hero_name: Mapped[str] = mapped_column(String)
+
+    player_stat: Mapped["PlayerStat"] = relationship(back_populates="hero_stat")
+    values: Mapped[list["HeroStatValue"]] = relationship(
+        back_populates="hero_stat", cascade="all, delete-orphan"
+    )
+
+
+class HeroStatValue(Base):
+    __tablename__ = "hero_stat_values"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    hero_stat_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("hero_stats.id", ondelete="CASCADE")
+    )
+    label: Mapped[str] = mapped_column(String)
+    value: Mapped[str] = mapped_column(String)
+    is_featured: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    hero_stat: Mapped["HeroStat"] = relationship(back_populates="values")
