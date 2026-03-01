@@ -11,3 +11,6 @@ wheels/
 
 # Claude Code
 .claude/
+
+# Systemd service
+overwatch-stats-mcp.service

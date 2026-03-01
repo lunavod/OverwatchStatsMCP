@@ -1,0 +1,15 @@
+[Unit]
+Description=Overwatch Stats MCP Server
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=YOUR_USER
+WorkingDirectory=/path/to/OverwatchStatsMCP
+Environment=DATABASE_URL=postgresql+asyncpg://overwatch_stats:overwatch_stats@localhost:5432/overwatch_stats
+ExecStart=/path/to/OverwatchStatsMCP/.venv/bin/python main.py --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
