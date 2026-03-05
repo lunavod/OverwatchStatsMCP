@@ -4,8 +4,9 @@ An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server for t
 
 ## Features
 
-- **Match tracking** — Record complete 10-player lobbies with per-player stats and hero-specific breakdowns
+- **Match tracking** — Record complete 10-player lobbies with per-player stats, hero-specific breakdowns, notes, and screenshots
 - **Flexible querying** — Filter and sort matches by map, mode, queue type, hero, date range, and stats
+- **Match editing** — Update match metadata, notes, backfill flag, and manage screenshots after submission
 - **Aggregated analytics** — Win rates, averages, and trends grouped by role, map, mode, hero, or time period (supports dual-axis grouping)
 - **Hero detail stats** — Per-hero stat breakdowns with automatic parsing of percentages, durations (MM:SS), and comma-formatted numbers
 - **Teammate tracking** — Win/loss rates with recurring teammates, with name normalization to handle rank suffixes like "(Bronze)"
@@ -18,6 +19,7 @@ An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server for t
 - Python 3.12+
 - PostgreSQL 15+
 - [uv](https://docs.astral.sh/uv/) (recommended package manager)
+- Docker (for running tests)
 
 ## Quick Start
 
@@ -121,15 +123,18 @@ Record a completed match with all player stats.
 
 **Parameters:**
 
-| Name         | Type       | Required | Description                                              |
-|--------------|------------|----------|----------------------------------------------------------|
-| `map_name`   | string     | Yes      | Map name (e.g. "Lijiang Tower")                          |
-| `duration`   | string     | Yes      | Match duration as `MM:SS`                                |
-| `mode`       | string     | Yes      | `PUSH`, `CONTROL`, `ESCORT`, `HYBRID`, `CLASH`, `FLASHPOINT` |
-| `queue_type` | string     | Yes      | `COMPETITIVE` or `QUICKPLAY`                             |
-| `result`     | string     | Yes      | `VICTORY`, `DEFEAT`, or `UNKNOWN`                        |
-| `players`    | array      | Yes      | Array of 10 player objects (see below)                   |
-| `played_at`  | string     | No       | ISO 8601 timestamp                                       |
+| Name          | Type       | Required | Description                                              |
+|---------------|------------|----------|----------------------------------------------------------|
+| `map_name`    | string     | Yes      | Map name (e.g. "Lijiang Tower")                          |
+| `duration`    | string     | Yes      | Match duration as `MM:SS`                                |
+| `mode`        | string     | Yes      | `PUSH`, `CONTROL`, `ESCORT`, `HYBRID`, `CLASH`, `FLASHPOINT` |
+| `queue_type`  | string     | Yes      | `COMPETITIVE` or `QUICKPLAY`                             |
+| `result`      | string     | Yes      | `VICTORY`, `DEFEAT`, or `UNKNOWN`                        |
+| `players`     | array      | Yes      | Array of 10 player objects (see below)                   |
+| `played_at`   | string     | No       | ISO 8601 timestamp                                       |
+| `notes`       | string     | No       | Free-text notes about the match                          |
+| `is_backfill` | bool       | No       | Whether this match was backfilled from historical data (default false) |
+| `screenshots` | string[]   | No       | List of screenshot URLs (image download links)           |
 
 **Player object:**
 
@@ -149,7 +154,27 @@ Record a completed match with all player stats.
 
 ### `get_match`
 
-Retrieve full details for a match by UUID, including all player stats and hero stat values.
+Retrieve full details for a match by UUID, including all player stats, hero stat values, notes, backfill flag, and screenshot URLs.
+
+### `edit_match`
+
+Edit an existing match's metadata. Only provided fields are updated.
+
+**Parameters:**
+
+| Name                   | Type     | Required | Description                                    |
+|------------------------|----------|----------|------------------------------------------------|
+| `match_id`             | string   | Yes      | UUID of the match to edit                      |
+| `map_name`             | string   | No       | New map name                                   |
+| `duration`             | string   | No       | New duration as `MM:SS`                        |
+| `mode`                 | string   | No       | New game mode                                  |
+| `queue_type`           | string   | No       | `COMPETITIVE` or `QUICKPLAY`                   |
+| `result`               | string   | No       | `VICTORY`, `DEFEAT`, or `UNKNOWN`              |
+| `played_at`            | string   | No       | ISO 8601 timestamp (empty string to clear)     |
+| `notes`                | string   | No       | New notes text (empty string to clear)         |
+| `is_backfill`          | bool     | No       | New backfill flag                              |
+| `screenshots_to_add`   | string[] | No       | Screenshot URLs to attach                      |
+| `screenshots_to_remove`| string[] | No       | Screenshot URLs to remove                      |
 
 ### `list_matches`
 
@@ -198,29 +223,64 @@ Win rates and average stats bucketed by match duration. Parses `MM:SS` duration 
 
 ### `delete_match`
 
-Delete a match and all associated data (player stats, hero stats) by UUID. Cascading delete.
+Delete a match and all associated data (player stats, hero stats, screenshots) by UUID. Cascading delete.
 
 ## Database Schema
 
-Four tables with cascading deletes:
+Five tables with cascading deletes:
 
 ```
 matches
-  └── player_stats
-        └── hero_stats
-              └── hero_stat_values
+  ├── player_stats
+  │     └── hero_stats
+  │           └── hero_stat_values
+  └── screenshots
 ```
 
-- **matches** — Map, mode, queue type, result, duration, timestamps
+- **matches** — Map, mode, queue type, result, duration, notes, is_backfill, timestamps
 - **player_stats** — Per-player per-match: team, role, name, 6 stat columns, is_self flag
 - **hero_stats** — Links a player_stat to a hero name (1:1)
 - **hero_stat_values** — Arbitrary key-value hero stats (label/value/is_featured)
+- **screenshots** — Screenshot URLs attached to a match
 
 Migrations are managed with Alembic. To create a new migration after modifying models:
 
 ```bash
 uv run alembic revision --autogenerate -m "description"
 uv run alembic upgrade head
+```
+
+## Testing
+
+Tests run against a disposable PostgreSQL container via [testcontainers](https://testcontainers.com/) — they never connect to any external or production database. Docker must be running.
+
+### Install test dependencies
+
+```bash
+uv sync --extra test
+```
+
+### Run tests
+
+```bash
+uv run pytest
+```
+
+```bash
+uv run pytest -v                           # verbose output
+uv run pytest tests/test_match_crud.py     # single file
+uv run pytest -k "test_filter"             # keyword match
+```
+
+### Test structure
+
+```
+tests/
+├── conftest.py            # Testcontainers setup, DB override, per-test cleanup
+├── factories.py           # Test data helpers (make_players, create_test_match)
+├── test_match_crud.py     # Submit, get, edit, delete (30 tests)
+├── test_list_matches.py   # Filtering, sorting, pagination (16 tests)
+└── test_analytics.py      # Stats, heroes, teammates, rankings, duration, history (40 tests)
 ```
 
 ## Project Structure
@@ -234,6 +294,7 @@ uv run alembic upgrade head
 ├── alembic/
 │   ├── env.py           # Async migration environment
 │   └── versions/        # Migration scripts
+├── tests/               # Test suite (86 tests, requires Docker)
 ├── docker-compose.yml   # PostgreSQL service
 └── pyproject.toml       # Project metadata and dependencies
 ```

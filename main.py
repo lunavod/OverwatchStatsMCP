@@ -5,7 +5,7 @@ from decimal import Decimal
 from sqlalchemy import Float, Integer, String, case, cast, delete, func, select
 from sqlalchemy.orm import joinedload
 
-from db import async_session
+import db
 from mcp.server.fastmcp import FastMCP
 from models import HeroStat, HeroStatValue, Match, PlayerStat, Screenshot
 
@@ -158,7 +158,7 @@ async def submit_match(
         is_backfill: Whether this match was backfilled from historical data (default false)
         screenshots: Optional list of screenshot URLs (image download links)
     """
-    async with async_session() as session:
+    async with db.async_session() as session:
         async with session.begin():
             match = Match(
                 map_name=map_name,
@@ -219,7 +219,7 @@ async def get_match(match_id: str) -> dict:
     Parameters:
         match_id: UUID of the match
     """
-    async with async_session() as session:
+    async with db.async_session() as session:
         stmt = (
             select(Match)
             .where(Match.id == uuid.UUID(match_id))
@@ -313,7 +313,7 @@ async def list_matches(
     """
     limit = min(limit, 100)
 
-    async with async_session() as session:
+    async with db.async_session() as session:
         base = select(Match)
 
         if map_name:
@@ -444,7 +444,7 @@ async def get_stats_summary(
     if group_by_2 and not group_by:
         return {"error": "group_by_2 requires group_by to be set"}
 
-    async with async_session() as session:
+    async with db.async_session() as session:
         # Resolve group columns
         group_col, needs_hero_1, is_time_1 = _resolve_group_col(group_by) if group_by else (None, False, False)
         group_col_2, needs_hero_2, is_time_2 = _resolve_group_col(group_by_2) if group_by_2 else (None, False, False)
@@ -577,7 +577,7 @@ async def get_hero_detail_stats(
     """
     numeric_val = _safe_float_cast()
 
-    async with async_session() as session:
+    async with db.async_session() as session:
         # CTE: parse values first, then aggregate (avoids PG CASE eval issues in aggs)
         parsed = (
             select(
@@ -661,7 +661,7 @@ async def get_teammate_stats(
         PlayerStat.player_name, r"\s*\([^)]+\)\s*$", "", "g"
     )
 
-    async with async_session() as session:
+    async with db.async_session() as session:
         stmt = (
             select(
                 normalized_name.label("player_name"),
@@ -722,7 +722,7 @@ async def get_match_player_history(
         PlayerStat.player_name, r"\s*\([^)]+\)\s*$", "", "g"
     )
 
-    async with async_session() as session:
+    async with db.async_session() as session:
         # Query 1: target match info + all non-self players with normalized names
         q1 = (
             select(
@@ -911,7 +911,7 @@ async def get_match_rankings(
     """
     stat_names = ["eliminations", "assists", "deaths", "damage", "healing", "mitigation"]
 
-    async with async_session() as session:
+    async with db.async_session() as session:
         # Build CTE with window functions for each stat
         stat_cols = {
             name: getattr(PlayerStat, name) for name in stat_names
@@ -996,7 +996,7 @@ async def get_duration_stats(
     dur_sec = _duration_seconds()
     bucket_expr = (func.floor(dur_sec / bucket_size) * bucket_size)
 
-    async with async_session() as session:
+    async with db.async_session() as session:
         stmt = (
             select(
                 cast(bucket_expr, Integer).label("bucket"),
@@ -1079,7 +1079,7 @@ async def edit_match(
         screenshots_to_add: List of screenshot URLs to attach
         screenshots_to_remove: List of screenshot URLs to remove
     """
-    async with async_session() as session:
+    async with db.async_session() as session:
         async with session.begin():
             stmt = (
                 select(Match)
@@ -1126,7 +1126,7 @@ async def delete_match(match_id: str) -> dict:
     Parameters:
         match_id: UUID of the match to delete
     """
-    async with async_session() as session:
+    async with db.async_session() as session:
         async with session.begin():
             stmt = delete(Match).where(Match.id == uuid.UUID(match_id))
             result = await session.execute(stmt)
