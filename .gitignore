@@ -14,3 +14,6 @@ wheels/
 
 # Systemd service
 overwatch-stats-mcp.service
+
+# Data files
+looker-blobs.txt

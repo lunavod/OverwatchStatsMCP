@@ -7,7 +7,7 @@ from sqlalchemy.orm import joinedload
 
 from db import async_session
 from mcp.server.fastmcp import FastMCP
-from models import HeroStat, HeroStatValue, Match, PlayerStat
+from models import HeroStat, HeroStatValue, Match, PlayerStat, Screenshot
 
 mcp = FastMCP("OverwatchStats", json_response=True)
 
@@ -136,6 +136,9 @@ async def submit_match(
     result: str,
     players: list[dict],
     played_at: str | None = None,
+    notes: str | None = None,
+    is_backfill: bool = False,
+    screenshots: list[str] | None = None,
 ) -> dict:
     """Submit a completed Overwatch match with all player stats.
 
@@ -151,6 +154,9 @@ async def submit_match(
             is_self (bool, default false),
             hero (optional dict with hero_name and stats list of {label, value, is_featured})
         played_at: Optional ISO 8601 timestamp
+        notes: Optional free-text notes about the match
+        is_backfill: Whether this match was backfilled from historical data (default false)
+        screenshots: Optional list of screenshot URLs (image download links)
     """
     async with async_session() as session:
         async with session.begin():
@@ -161,6 +167,8 @@ async def submit_match(
                 queue_type=queue_type.upper(),
                 result=result.upper(),
                 played_at=datetime.fromisoformat(played_at) if played_at else None,
+                notes=notes,
+                is_backfill=is_backfill,
             )
             session.add(match)
 
@@ -198,6 +206,9 @@ async def submit_match(
                             )
                         )
 
+            for url in screenshots or []:
+                session.add(Screenshot(match=match, url=url))
+
     return {"match_id": str(match.id)}
 
 
@@ -215,7 +226,8 @@ async def get_match(match_id: str) -> dict:
             .options(
                 joinedload(Match.player_stats)
                 .joinedload(PlayerStat.hero_stat)
-                .joinedload(HeroStat.values)
+                .joinedload(HeroStat.values),
+                joinedload(Match.screenshots),
             )
         )
         result = await session.execute(stmt)
@@ -233,6 +245,9 @@ async def get_match(match_id: str) -> dict:
         "result": match.result,
         "played_at": match.played_at.isoformat() if match.played_at else None,
         "created_at": match.created_at.isoformat() if match.created_at else None,
+        "notes": match.notes,
+        "is_backfill": match.is_backfill,
+        "screenshots": [s.url for s in match.screenshots],
         "player_stats": [
             {
                 "id": str(ps.id),
@@ -382,6 +397,8 @@ async def list_matches(
                 "result": m.result,
                 "played_at": m.played_at.isoformat() if m.played_at else None,
                 "created_at": m.created_at.isoformat() if m.created_at else None,
+                "notes": m.notes,
+                "is_backfill": m.is_backfill,
                 "sort_value": int(sv) if sv is not None else None,
             }
             matches_out.append(d)
@@ -397,6 +414,8 @@ async def list_matches(
                     "result": m.result,
                     "played_at": m.played_at.isoformat() if m.played_at else None,
                     "created_at": m.created_at.isoformat() if m.created_at else None,
+                    "notes": m.notes,
+                    "is_backfill": m.is_backfill,
                 }
             )
 
@@ -1029,6 +1048,75 @@ async def get_duration_stats(
         )
 
     return {"bucket_size_seconds": bucket_size, "buckets": buckets}
+
+
+@mcp.tool()
+async def edit_match(
+    match_id: str,
+    map_name: str | None = None,
+    duration: str | None = None,
+    mode: str | None = None,
+    queue_type: str | None = None,
+    result: str | None = None,
+    played_at: str | None = None,
+    notes: str | None = None,
+    is_backfill: bool | None = None,
+    screenshots_to_add: list[str] | None = None,
+    screenshots_to_remove: list[str] | None = None,
+) -> dict:
+    """Edit an existing match's metadata. Only provided fields are updated.
+
+    Parameters:
+        match_id: UUID of the match to edit
+        map_name: New map name
+        duration: New duration as MM:SS
+        mode: New game mode
+        queue_type: New queue type (COMPETITIVE or QUICKPLAY)
+        result: New result (VICTORY, DEFEAT, or UNKNOWN)
+        played_at: New ISO 8601 timestamp (pass empty string to clear)
+        notes: New notes text (pass empty string to clear)
+        is_backfill: New backfill flag
+        screenshots_to_add: List of screenshot URLs to attach
+        screenshots_to_remove: List of screenshot URLs to remove
+    """
+    async with async_session() as session:
+        async with session.begin():
+            stmt = (
+                select(Match)
+                .where(Match.id == uuid.UUID(match_id))
+                .options(joinedload(Match.screenshots))
+            )
+            match = (await session.execute(stmt)).unique().scalar_one_or_none()
+            if not match:
+                return {"error": "Match not found"}
+
+            if map_name is not None:
+                match.map_name = map_name
+            if duration is not None:
+                match.duration = duration
+            if mode is not None:
+                match.mode = mode.upper()
+            if queue_type is not None:
+                match.queue_type = queue_type.upper()
+            if result is not None:
+                match.result = result.upper()
+            if played_at is not None:
+                match.played_at = datetime.fromisoformat(played_at) if played_at else None
+            if notes is not None:
+                match.notes = notes or None
+            if is_backfill is not None:
+                match.is_backfill = is_backfill
+
+            if screenshots_to_remove:
+                remove_set = set(screenshots_to_remove)
+                for s in list(match.screenshots):
+                    if s.url in remove_set:
+                        await session.delete(s)
+
+            for url in screenshots_to_add or []:
+                session.add(Screenshot(match=match, url=url))
+
+    return {"updated": True}
 
 
 @mcp.tool()

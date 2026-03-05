@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Uuid, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from db import Base
@@ -17,11 +17,16 @@ class Match(Base):
     queue_type: Mapped[str] = mapped_column(String)
     result: Mapped[str] = mapped_column(String)
     played_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    notes: Mapped[str | None] = mapped_column(Text)
+    is_backfill: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
 
     player_stats: Mapped[list["PlayerStat"]] = relationship(
+        back_populates="match", cascade="all, delete-orphan"
+    )
+    screenshots: Mapped[list["Screenshot"]] = relationship(
         back_populates="match", cascade="all, delete-orphan"
     )
 
@@ -77,3 +82,18 @@ class HeroStatValue(Base):
     is_featured: Mapped[bool] = mapped_column(Boolean, default=False)
 
     hero_stat: Mapped["HeroStat"] = relationship(back_populates="values")
+
+
+class Screenshot(Base):
+    __tablename__ = "screenshots"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    match_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("matches.id", ondelete="CASCADE")
+    )
+    url: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    match: Mapped["Match"] = relationship(back_populates="screenshots")
