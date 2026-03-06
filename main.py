@@ -1,15 +1,28 @@
+import base64
+import os
 import uuid
 from datetime import datetime
 from decimal import Decimal
+from pathlib import Path
 
 from sqlalchemy import Float, Integer, String, case, cast, delete, func, select
 from sqlalchemy.orm import joinedload
+from starlette.routing import Mount
+from starlette.staticfiles import StaticFiles
 
 import db
 from mcp.server.fastmcp import FastMCP
 from models import HeroStat, HeroStatValue, Match, PlayerStat, Screenshot
 
+UPLOADS_DIR = Path(os.getenv("UPLOADS_DIR", "uploads"))
+UPLOADS_DIR.mkdir(exist_ok=True)
+
 mcp = FastMCP("OverwatchStats", json_response=True)
+
+# Mount static file serving for uploaded screenshots
+mcp._custom_starlette_routes.append(
+    Mount("/uploads", app=StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
+)
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -117,6 +130,29 @@ def _safe_float_cast():
 
 
 # ---------------------------------------------------------------------------
+# Screenshot upload helpers
+# ---------------------------------------------------------------------------
+
+_ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "gif"}
+
+
+def _save_screenshot(data_b64: str, filename_hint: str | None = None) -> str:
+    """Decode a base64 image and save it to UPLOADS_DIR. Returns the relative URL path."""
+    raw = base64.b64decode(data_b64)
+
+    # Detect extension from filename hint or default to png
+    ext = "png"
+    if filename_hint:
+        parts = filename_hint.rsplit(".", 1)
+        if len(parts) == 2 and parts[1].lower() in _ALLOWED_EXTENSIONS:
+            ext = parts[1].lower()
+
+    name = f"{uuid.uuid4().hex}.{ext}"
+    (UPLOADS_DIR / name).write_bytes(raw)
+    return f"/uploads/{name}"
+
+
+# ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------
 
@@ -139,6 +175,7 @@ async def submit_match(
     notes: str | None = None,
     is_backfill: bool = False,
     screenshots: list[str] | None = None,
+    screenshot_uploads: list[dict] | None = None,
 ) -> dict:
     """Submit a completed Overwatch match with all player stats.
 
@@ -157,6 +194,8 @@ async def submit_match(
         notes: Optional free-text notes about the match
         is_backfill: Whether this match was backfilled from historical data (default false)
         screenshots: Optional list of screenshot URLs (image download links)
+        screenshot_uploads: Optional list of base64 image uploads, each with keys:
+            data (base64-encoded image bytes), filename (optional, used for extension detection)
     """
     async with db.async_session() as session:
         async with session.begin():
@@ -208,6 +247,10 @@ async def submit_match(
 
             for url in screenshots or []:
                 session.add(Screenshot(match=match, url=url))
+
+            for upload in screenshot_uploads or []:
+                path = _save_screenshot(upload["data"], upload.get("filename"))
+                session.add(Screenshot(match=match, url=path))
 
     return {"match_id": str(match.id)}
 
@@ -1062,6 +1105,7 @@ async def edit_match(
     notes: str | None = None,
     is_backfill: bool | None = None,
     screenshots_to_add: list[str] | None = None,
+    screenshot_uploads: list[dict] | None = None,
     screenshots_to_remove: list[str] | None = None,
 ) -> dict:
     """Edit an existing match's metadata. Only provided fields are updated.
@@ -1077,6 +1121,8 @@ async def edit_match(
         notes: New notes text (pass empty string to clear)
         is_backfill: New backfill flag
         screenshots_to_add: List of screenshot URLs to attach
+        screenshot_uploads: List of base64 image uploads, each with keys:
+            data (base64-encoded image bytes), filename (optional, used for extension detection)
         screenshots_to_remove: List of screenshot URLs to remove
     """
     async with db.async_session() as session:
@@ -1116,7 +1162,37 @@ async def edit_match(
             for url in screenshots_to_add or []:
                 session.add(Screenshot(match=match, url=url))
 
+            for upload in screenshot_uploads or []:
+                path = _save_screenshot(upload["data"], upload.get("filename"))
+                session.add(Screenshot(match=match, url=path))
+
     return {"updated": True}
+
+
+@mcp.tool()
+async def upload_screenshot(
+    match_id: str,
+    data: str,
+    filename: str | None = None,
+) -> dict:
+    """Upload a base64-encoded screenshot and attach it to a match.
+
+    Parameters:
+        match_id: UUID of the match to attach the screenshot to
+        data: Base64-encoded image bytes
+        filename: Optional filename hint for extension detection (e.g. "screen.jpg")
+    """
+    path = _save_screenshot(data, filename)
+
+    async with db.async_session() as session:
+        async with session.begin():
+            stmt = select(Match).where(Match.id == uuid.UUID(match_id))
+            match = (await session.execute(stmt)).scalar_one_or_none()
+            if not match:
+                return {"error": "Match not found"}
+            session.add(Screenshot(match=match, url=path))
+
+    return {"url": path}
 
 
 @mcp.tool()

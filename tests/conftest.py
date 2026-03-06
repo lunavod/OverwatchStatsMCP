@@ -3,11 +3,16 @@
 Requires Docker to be running. Tests NEVER connect to any external / production database.
 """
 
+import shutil
+import tempfile
+from pathlib import Path
+
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from testcontainers.postgres import PostgresContainer
 
 import db
+import main
 from db import Base
 import models  # noqa: F401 — ensure all models are registered with Base.metadata
 
@@ -15,6 +20,17 @@ import models  # noqa: F401 — ensure all models are registered with Base.metad
 # ---------------------------------------------------------------------------
 # Session-scoped: container + engine + table creation (once per test run)
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _test_uploads_dir():
+    """Redirect UPLOADS_DIR to a temp directory for the entire test session."""
+    tmp = Path(tempfile.mkdtemp(prefix="ow_test_uploads_"))
+    original = main.UPLOADS_DIR
+    main.UPLOADS_DIR = tmp
+    yield tmp
+    main.UPLOADS_DIR = original
+    shutil.rmtree(tmp, ignore_errors=True)
 
 
 @pytest.fixture(scope="session")

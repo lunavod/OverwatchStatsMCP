@@ -18,5 +18,8 @@ overwatch-stats-mcp.service
 # Environment
 .env
 
+# Uploads
+uploads/
+
 # Data files
 looker-blobs.txt
