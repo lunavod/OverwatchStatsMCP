@@ -12,7 +12,7 @@ from starlette.staticfiles import StaticFiles
 
 import db
 from mcp.server.fastmcp import FastMCP
-from models import HeroStat, HeroStatValue, Match, PlayerStat, Screenshot
+from models import HeroStat, HeroStatValue, Match, PlayerNote, PlayerStat, Screenshot
 from webhook import fire_webhook
 
 UPLOADS_DIR = Path(os.getenv("UPLOADS_DIR", "uploads"))
@@ -295,8 +295,11 @@ async def get_match(match_id: str) -> dict:
         result = await session.execute(stmt)
         match = result.unique().scalar_one_or_none()
 
-    if not match:
-        return {"error": "Match not found"}
+        if not match:
+            return {"error": "Match not found"}
+
+        player_names = [ps.player_name for ps in match.player_stats]
+        notes_map = await _fetch_player_notes(session, player_names)
 
     return {
         "id": str(match.id),
@@ -317,6 +320,7 @@ async def get_match(match_id: str) -> dict:
                 "team": ps.team,
                 "role": ps.role,
                 "player_name": ps.player_name,
+                "player_note": notes_map.get(ps.player_name),
                 "eliminations": ps.eliminations,
                 "assists": ps.assists,
                 "deaths": ps.deaths,
@@ -749,6 +753,9 @@ async def get_teammate_stats(
 
         rows = (await session.execute(stmt)).all()
 
+        player_names = [row.player_name for row in rows]
+        notes_map = await _fetch_player_notes(session, player_names)
+
     teammates = []
     for row in rows:
         games = row.games or 0
@@ -757,6 +764,7 @@ async def get_teammate_stats(
         teammates.append(
             {
                 "player_name": row.player_name,
+                "player_note": notes_map.get(row.player_name),
                 "games": games,
                 "wins": wins,
                 "losses": losses,
@@ -835,6 +843,7 @@ async def get_match_player_history(
                 "normalized_name": row.normalized_name,
                 "team": row.team,
                 "role": row.role,
+                "player_note": None,  # populated after notes fetch
                 "current_match_stats": {
                     "eliminations": row.eliminations,
                     "assists": row.assists,
@@ -900,6 +909,12 @@ async def get_match_player_history(
 
         rows_q2 = (await session.execute(outer)).all()
 
+        all_player_names = [info["player_name"] for info in player_info.values()]
+        notes_map = await _fetch_player_notes(session, all_player_names)
+
+    for info in player_info.values():
+        info["player_note"] = notes_map.get(info["player_name"])
+
     # Build result: group history rows by normalized_name
     history_by_name = {}
     appearances_by_name = {}
@@ -945,6 +960,7 @@ async def get_match_player_history(
                 "normalized_name": info["normalized_name"],
                 "team": info["team"],
                 "role": info["role"],
+                "player_note": info["player_note"],
             })
 
     return {
@@ -1278,6 +1294,78 @@ async def delete_match(match_id: str) -> dict:
             result = await session.execute(stmt)
 
     return {"deleted": result.rowcount > 0}
+
+
+# ---------------------------------------------------------------------------
+# Player notes helpers
+# ---------------------------------------------------------------------------
+
+
+async def _fetch_player_notes(session, player_names: list[str]) -> dict[str, str]:
+    """Fetch notes for a list of player names. Returns {name: note} mapping."""
+    if not player_names:
+        return {}
+    stmt = select(PlayerNote).where(PlayerNote.player_name.in_(player_names))
+    rows = (await session.execute(stmt)).scalars().all()
+    return {r.player_name: r.note for r in rows}
+
+
+# ---------------------------------------------------------------------------
+# Player notes CRUD
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+async def set_player_note(player_name: str, note: str) -> dict:
+    """Set or update a note for a player. Notes are global, not per-match.
+
+    Parameters:
+        player_name: The player's username (exact match)
+        note: The note text (pass empty string to delete the note)
+    """
+    async with db.async_session() as session:
+        async with session.begin():
+            stmt = select(PlayerNote).where(PlayerNote.player_name == player_name)
+            existing = (await session.execute(stmt)).scalar_one_or_none()
+            if not note:
+                if existing:
+                    await session.delete(existing)
+                    return {"deleted": True}
+                return {"deleted": False}
+            if existing:
+                existing.note = note
+            else:
+                session.add(PlayerNote(player_name=player_name, note=note))
+    return {"player_name": player_name, "note": note}
+
+
+@mcp.tool()
+async def get_player_note(player_name: str) -> dict:
+    """Get the note for a player.
+
+    Parameters:
+        player_name: The player's username (exact match)
+    """
+    async with db.async_session() as session:
+        stmt = select(PlayerNote).where(PlayerNote.player_name == player_name)
+        row = (await session.execute(stmt)).scalar_one_or_none()
+    if not row:
+        return {"player_name": player_name, "note": None}
+    return {"player_name": row.player_name, "note": row.note}
+
+
+@mcp.tool()
+async def list_player_notes() -> dict:
+    """List all player notes."""
+    async with db.async_session() as session:
+        stmt = select(PlayerNote).order_by(PlayerNote.player_name)
+        rows = (await session.execute(stmt)).scalars().all()
+    return {
+        "notes": [
+            {"player_name": r.player_name, "note": r.note}
+            for r in rows
+        ]
+    }
 
 
 if __name__ == "__main__":
