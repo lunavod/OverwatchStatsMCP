@@ -1,5 +1,10 @@
 import asyncio
+import os
 from logging.config import fileConfig
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
@@ -16,15 +21,14 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
+# Use DATABASE_URL env var if set, otherwise fall back to alembic.ini
+if os.getenv("DATABASE_URL"):
+    config.set_main_option("sqlalchemy.url", os.environ["DATABASE_URL"])
+
 from db import Base
 import models  # noqa: F401 — registers models with Base.metadata
 
 target_metadata = Base.metadata
-
-# other values from the config, defined by the needs of env.py,
-# can be acquired:
-# my_important_option = config.get_main_option("my_important_option")
-# ... etc.
 
 
 def run_migrations_offline() -> None:
