@@ -175,6 +175,7 @@ async def submit_match(
     played_at: str | None = None,
     notes: str | None = None,
     is_backfill: bool = False,
+    source: str = "",
     screenshots: list[str] | None = None,
     screenshot_uploads: list[dict] | None = None,
 ) -> dict:
@@ -194,6 +195,7 @@ async def submit_match(
         played_at: Optional ISO 8601 timestamp
         notes: Optional free-text notes about the match
         is_backfill: Whether this match was backfilled from historical data (default false)
+        source: Optional source identifier for the match (e.g. "ocr", "manual")
         screenshots: Optional list of screenshot URLs (image download links)
         screenshot_uploads: Optional list of base64 image uploads, each with keys:
             data (base64-encoded image bytes), filename (optional, used for extension detection)
@@ -209,6 +211,7 @@ async def submit_match(
                 played_at=datetime.fromisoformat(played_at) if played_at else None,
                 notes=notes,
                 is_backfill=is_backfill,
+                source=source,
             )
             session.add(match)
 
@@ -265,6 +268,7 @@ async def submit_match(
         "played_at": played_at,
         "notes": notes,
         "is_backfill": is_backfill,
+        "source": source,
     })
 
     return match_result
@@ -305,6 +309,7 @@ async def get_match(match_id: str) -> dict:
         "created_at": match.created_at.isoformat() if match.created_at else None,
         "notes": match.notes,
         "is_backfill": match.is_backfill,
+        "source": match.source,
         "screenshots": [s.url for s in match.screenshots],
         "player_stats": [
             {
@@ -1119,6 +1124,7 @@ async def edit_match(
     played_at: str | None = None,
     notes: str | None = None,
     is_backfill: bool | None = None,
+    source: str | None = None,
     screenshots_to_add: list[str] | None = None,
     screenshot_uploads: list[dict] | None = None,
     screenshots_to_remove: list[str] | None = None,
@@ -1135,6 +1141,7 @@ async def edit_match(
         played_at: New ISO 8601 timestamp (pass empty string to clear)
         notes: New notes text (pass empty string to clear)
         is_backfill: New backfill flag
+        source: New source identifier
         screenshots_to_add: List of screenshot URLs to attach
         screenshot_uploads: List of base64 image uploads, each with keys:
             data (base64-encoded image bytes), filename (optional, used for extension detection)
@@ -1167,6 +1174,8 @@ async def edit_match(
                 match.notes = notes or None
             if is_backfill is not None:
                 match.is_backfill = is_backfill
+            if source is not None:
+                match.source = source
 
             if screenshots_to_remove:
                 remove_set = set(screenshots_to_remove)

@@ -41,6 +41,10 @@ OPENCLAW_WEBHOOK_TOKEN=your-secret-token
 # Must match an allowed prefix in your OpenClaw config
 OPENCLAW_WEBHOOK_SESSION_KEY=hook:overwatch
 
+# Optional — only fire the webhook for matches with these sources (comma-separated)
+# If empty or unset, the webhook fires for all matches regardless of source
+OPENCLAW_WEBHOOK_SOURCE_FILTER=ocr,manual
+
 # Optional — path to the Jinja2 template file (default: webhook_prompt.j2)
 OPENCLAW_WEBHOOK_TEMPLATE=webhook_prompt.j2
 ```
@@ -66,14 +70,16 @@ The template uses [Jinja2](https://jinja.palletsprojects.com/) syntax. The `matc
 | `played_at`  | string/null | ISO 8601 timestamp (if provided)    |
 | `notes`      | string/null | Free-text notes (if provided)       |
 | `is_backfill`| bool        | Whether the match was backfilled    |
+| `source`     | string      | Source identifier (default `""`)    |
 
 ## How it works
 
 1. When `submit_match` is called, the match is saved to the database
-2. If `OPENCLAW_WEBHOOK_URL` and `OPENCLAW_WEBHOOK_TOKEN` are set, the server renders the Jinja2 template with the match data
-3. The rendered prompt is POSTed to the OpenClaw `/hooks/agent` endpoint
-4. OpenClaw runs an agent turn with the prompt, which can use the MCP tools to fetch full match details and provide analysis
-5. If a `sessionKey` is configured, all webhook-triggered agent turns share the same session context
+2. If `OPENCLAW_WEBHOOK_URL` and `OPENCLAW_WEBHOOK_TOKEN` are set, the source filter is checked — if `OPENCLAW_WEBHOOK_SOURCE_FILTER` is set, the match's `source` must be in the comma-separated list
+3. The server renders the Jinja2 template with the match data
+4. The rendered prompt is POSTed to the OpenClaw `/hooks/agent` endpoint
+5. OpenClaw runs an agent turn with the prompt, which can use the MCP tools to fetch full match details and provide analysis
+6. If a `sessionKey` is configured, all webhook-triggered agent turns share the same session context
 
 ## Troubleshooting
 
@@ -81,3 +87,4 @@ The template uses [Jinja2](https://jinja.palletsprojects.com/) syntax. The `matc
 - **Template not found**: Ensure `webhook_prompt.j2` exists (copy from `webhook_prompt.j2.example`)
 - **401 Unauthorized**: Verify the token matches your OpenClaw Gateway config
 - **Session key rejected**: Ensure `allowRequestSessionKey: true` and the key prefix is in `allowedSessionKeyPrefixes`
+- **Webhook not firing for certain matches**: Check `OPENCLAW_WEBHOOK_SOURCE_FILTER` — if set, only matches whose `source` is in the list will trigger the webhook

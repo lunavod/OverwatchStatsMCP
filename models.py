@@ -19,6 +19,7 @@ class Match(Base):
     played_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     notes: Mapped[str | None] = mapped_column(Text)
     is_backfill: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    source: Mapped[str] = mapped_column(String, default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

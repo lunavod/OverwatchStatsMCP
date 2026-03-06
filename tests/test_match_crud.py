@@ -125,6 +125,7 @@ class TestGetMatch:
             "created_at",
             "notes",
             "is_backfill",
+            "source",
             "screenshots",
             "player_stats",
         }

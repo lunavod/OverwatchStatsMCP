@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 import webhook
-from webhook import _render_prompt, fire_webhook
+from webhook import _render_prompt, _source_allowed, fire_webhook
 
 
 # ---------------------------------------------------------------------------
@@ -38,6 +38,7 @@ def match_data():
         "played_at": "2026-01-15T20:00:00",
         "notes": None,
         "is_backfill": False,
+        "source": "",
     }
 
 
@@ -67,6 +68,39 @@ def test_render_prompt_with_conditionals(tmp_path, match_data):
 
 
 # ---------------------------------------------------------------------------
+# Source filter
+# ---------------------------------------------------------------------------
+
+
+def test_source_allowed_no_filter():
+    with patch.object(webhook, "WEBHOOK_SOURCE_FILTER", ""):
+        assert _source_allowed("") is True
+        assert _source_allowed("ocr") is True
+        assert _source_allowed("manual") is True
+
+
+def test_source_allowed_single_value():
+    with patch.object(webhook, "WEBHOOK_SOURCE_FILTER", "ocr"):
+        assert _source_allowed("ocr") is True
+        assert _source_allowed("manual") is False
+        assert _source_allowed("") is False
+
+
+def test_source_allowed_multiple_values():
+    with patch.object(webhook, "WEBHOOK_SOURCE_FILTER", "ocr,manual"):
+        assert _source_allowed("ocr") is True
+        assert _source_allowed("manual") is True
+        assert _source_allowed("other") is False
+        assert _source_allowed("") is False
+
+
+def test_source_allowed_whitespace_handling():
+    with patch.object(webhook, "WEBHOOK_SOURCE_FILTER", " ocr , manual "):
+        assert _source_allowed("ocr") is True
+        assert _source_allowed("manual") is True
+
+
+# ---------------------------------------------------------------------------
 # fire_webhook — skips when not configured
 # ---------------------------------------------------------------------------
 
@@ -89,6 +123,46 @@ async def test_fire_webhook_noop_without_token(match_data):
         with patch("webhook.httpx.AsyncClient") as mock_client:
             await fire_webhook(match_data)
             mock_client.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# fire_webhook — skips when source doesn't match filter
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_fire_webhook_skips_filtered_source(match_data):
+    """No HTTP call when source doesn't match filter."""
+    match_data["source"] = "other"
+    with patch.object(webhook, "WEBHOOK_URL", "http://localhost/hooks/agent"), \
+         patch.object(webhook, "WEBHOOK_TOKEN", "tok"), \
+         patch.object(webhook, "WEBHOOK_SOURCE_FILTER", "ocr,manual"):
+        with patch("webhook.httpx.AsyncClient") as mock_client:
+            await fire_webhook(match_data)
+            mock_client.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_fire_webhook_fires_for_matching_source(template_file, match_data):
+    """HTTP call is made when source matches filter."""
+    match_data["source"] = "ocr"
+    mock_response = AsyncMock()
+    mock_response.status_code = 202
+    mock_response.raise_for_status = lambda: None
+
+    mock_client_instance = AsyncMock()
+    mock_client_instance.post.return_value = mock_response
+    mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
+    mock_client_instance.__aexit__ = AsyncMock(return_value=False)
+
+    with patch.object(webhook, "WEBHOOK_URL", "http://localhost:18789/hooks/agent"), \
+         patch.object(webhook, "WEBHOOK_TOKEN", "tok"), \
+         patch.object(webhook, "WEBHOOK_SESSION_KEY", None), \
+         patch.object(webhook, "WEBHOOK_SOURCE_FILTER", "ocr,manual"), \
+         patch("webhook.httpx.AsyncClient", return_value=mock_client_instance):
+        await fire_webhook(match_data)
+
+    mock_client_instance.post.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -206,6 +280,7 @@ async def test_submit_match_fires_webhook(template_file):
             players=make_players(),
             played_at="2026-02-10T19:00:00",
             notes="Close game",
+            source="ocr",
         )
 
     assert captured["match_id"] == result["match_id"]
@@ -215,6 +290,7 @@ async def test_submit_match_fires_webhook(template_file):
     assert captured["notes"] == "Close game"
     assert captured["played_at"] == "2026-02-10T19:00:00"
     assert captured["is_backfill"] is False
+    assert captured["source"] == "ocr"
 
 
 @pytest.mark.asyncio

@@ -10,6 +10,8 @@ Match ID: {{ match.match_id }}
 {% endif %}
 {% if match.notes %}Notes: {{ match.notes }}
 {% endif %}
+{% if match.source %}Source: {{ match.source }}
+{% endif %}
 {% if match.is_backfill %}(This was a backfilled match)
 {% endif %}
 

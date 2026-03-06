@@ -12,9 +12,18 @@ logger = logging.getLogger(__name__)
 WEBHOOK_URL = os.getenv("OPENCLAW_WEBHOOK_URL")
 WEBHOOK_TOKEN = os.getenv("OPENCLAW_WEBHOOK_TOKEN")
 WEBHOOK_SESSION_KEY = os.getenv("OPENCLAW_WEBHOOK_SESSION_KEY")
+WEBHOOK_SOURCE_FILTER = os.getenv("OPENCLAW_WEBHOOK_SOURCE_FILTER", "")
 WEBHOOK_TEMPLATE_PATH = Path(
     os.getenv("OPENCLAW_WEBHOOK_TEMPLATE", "webhook_prompt.j2")
 )
+
+
+def _source_allowed(source: str) -> bool:
+    """Check if the match source passes the filter."""
+    if not WEBHOOK_SOURCE_FILTER:
+        return True
+    allowed = {s.strip() for s in WEBHOOK_SOURCE_FILTER.split(",") if s.strip()}
+    return source in allowed
 
 
 def _load_template() -> str | None:
@@ -38,6 +47,9 @@ def _render_prompt(match_data: dict) -> str:
 async def fire_webhook(match_data: dict) -> None:
     """POST to the OpenClaw /hooks/agent endpoint with rendered prompt."""
     if not WEBHOOK_URL or not WEBHOOK_TOKEN:
+        return
+
+    if not _source_allowed(match_data.get("source", "")):
         return
 
     try:

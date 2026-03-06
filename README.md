@@ -134,6 +134,7 @@ Record a completed match with all player stats.
 | `played_at`   | string     | No       | ISO 8601 timestamp                                       |
 | `notes`       | string     | No       | Free-text notes about the match                          |
 | `is_backfill` | bool       | No       | Whether this match was backfilled from historical data (default false) |
+| `source`      | string     | No       | Source identifier (e.g. "ocr", "manual"; default empty)  |
 | `screenshots` | string[]   | No       | List of screenshot URLs (image download links)           |
 
 **Player object:**
@@ -173,6 +174,7 @@ Edit an existing match's metadata. Only provided fields are updated.
 | `played_at`            | string   | No       | ISO 8601 timestamp (empty string to clear)     |
 | `notes`                | string   | No       | New notes text (empty string to clear)         |
 | `is_backfill`          | bool     | No       | New backfill flag                              |
+| `source`               | string   | No       | New source identifier                          |
 | `screenshots_to_add`   | string[] | No       | Screenshot URLs to attach                      |
 | `screenshots_to_remove`| string[] | No       | Screenshot URLs to remove                      |
 
