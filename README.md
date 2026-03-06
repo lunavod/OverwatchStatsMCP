@@ -225,6 +225,18 @@ Win rates and average stats bucketed by match duration. Parses `MM:SS` duration 
 
 Delete a match and all associated data (player stats, hero stats, screenshots) by UUID. Cascading delete.
 
+## OpenClaw Webhook Integration
+
+The server can notify an OpenClaw agent whenever a new match is submitted. The agent receives a customisable prompt (Jinja2 template) with match details and can use the MCP tools to analyse the match.
+
+**Quick setup:**
+
+1. Set `OPENCLAW_WEBHOOK_URL` and `OPENCLAW_WEBHOOK_TOKEN` in `.env`
+2. Copy `webhook_prompt.j2.example` to `webhook_prompt.j2` and customise
+3. Optionally set `OPENCLAW_WEBHOOK_SESSION_KEY` for session continuity
+
+See [OPENCLAW_SETUP.md](OPENCLAW_SETUP.md) for full configuration details.
+
 ## Database Schema
 
 Five tables with cascading deletes:
@@ -287,16 +299,19 @@ tests/
 
 ```
 .
-├── main.py              # MCP server — all tools and helpers
-├── models.py            # SQLAlchemy ORM models
-├── db.py                # Database engine and session factory
-├── alembic.ini          # Alembic configuration
+├── main.py                    # MCP server — all tools and helpers
+├── models.py                  # SQLAlchemy ORM models
+├── db.py                      # Database engine and session factory
+├── webhook.py                 # OpenClaw webhook integration
+├── webhook_prompt.j2.example  # Example Jinja2 template for webhook prompt
+├── OPENCLAW_SETUP.md          # OpenClaw webhook setup guide
+├── alembic.ini                # Alembic configuration
 ├── alembic/
-│   ├── env.py           # Async migration environment
-│   └── versions/        # Migration scripts
-├── tests/               # Test suite (86 tests, requires Docker)
-├── docker-compose.yml   # PostgreSQL service
-└── pyproject.toml       # Project metadata and dependencies
+│   ├── env.py                 # Async migration environment
+│   └── versions/              # Migration scripts
+├── tests/                     # Test suite (86 tests, requires Docker)
+├── docker-compose.yml         # PostgreSQL service
+└── pyproject.toml             # Project metadata and dependencies
 ```
 
 ## Deployment

@@ -1,0 +1,16 @@
+A new Overwatch match has been recorded.
+
+Map: {{ match.map_name }}
+Mode: {{ match.mode }}
+Queue: {{ match.queue_type }}
+Result: {{ match.result }}
+Duration: {{ match.duration }}
+Match ID: {{ match.match_id }}
+{% if match.played_at %}Played at: {{ match.played_at }}
+{% endif %}
+{% if match.notes %}Notes: {{ match.notes }}
+{% endif %}
+{% if match.is_backfill %}(This was a backfilled match)
+{% endif %}
+
+Please analyse this match using the available MCP tools (get_match, get_match_player_history, get_match_rankings) and provide a brief summary.

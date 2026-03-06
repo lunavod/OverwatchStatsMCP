@@ -13,6 +13,7 @@ from starlette.staticfiles import StaticFiles
 import db
 from mcp.server.fastmcp import FastMCP
 from models import HeroStat, HeroStatValue, Match, PlayerStat, Screenshot
+from webhook import fire_webhook
 
 UPLOADS_DIR = Path(os.getenv("UPLOADS_DIR", "uploads"))
 UPLOADS_DIR.mkdir(exist_ok=True)
@@ -252,7 +253,21 @@ async def submit_match(
                 path = _save_screenshot(upload["data"], upload.get("filename"))
                 session.add(Screenshot(match=match, url=path))
 
-    return {"match_id": str(match.id)}
+    match_result = {"match_id": str(match.id)}
+
+    await fire_webhook({
+        **match_result,
+        "map_name": map_name,
+        "duration": duration,
+        "mode": mode.upper(),
+        "queue_type": queue_type.upper(),
+        "result": result.upper(),
+        "played_at": played_at,
+        "notes": notes,
+        "is_backfill": is_backfill,
+    })
+
+    return match_result
 
 
 @mcp.tool()

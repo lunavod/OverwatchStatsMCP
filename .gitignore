@@ -23,3 +23,6 @@ uploads/
 
 # Data files
 looker-blobs.txt
+
+# Webhook template (customise from .example)
+webhook_prompt.j2
