@@ -1,6 +1,7 @@
 """Tests for the OpenClaw webhook / agent-CLI integration."""
 
 import asyncio
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -273,23 +274,26 @@ async def test_agent_cli_builds_correct_command(template_file, match_data):
         timeout="120",
     ), \
          patch("shutil.which", return_value="/usr/bin/openclaw"), \
-         patch("asyncio.create_subprocess_exec", return_value=proc) as mock_exec:
+         patch("asyncio.create_subprocess_exec", return_value=proc) as mock_exec, \
+         patch("uuid.uuid4", return_value="test-uuid-1234"):
         await _fire_agent_cli(match_data)
 
     mock_exec.assert_called_once()
     cmd = mock_exec.call_args[0]
     assert cmd[0] == "/usr/bin/openclaw"
-    assert cmd[1] == "agent"
-    assert "--session-id" in cmd
-    assert cmd[cmd.index("--session-id") + 1] == "agent:main:telegram:group:-5033067937"
-    assert "--message" in cmd
+    assert cmd[1:4] == ("gateway", "call", "agent")
+    assert "--expect-final" in cmd
     assert "--timeout" in cmd
-    assert cmd[cmd.index("--timeout") + 1] == "120"
-    assert "--deliver" in cmd
-    assert "--channel" in cmd
-    assert cmd[cmd.index("--channel") + 1] == "telegram"
-    assert "--reply-to" in cmd
-    assert cmd[cmd.index("--reply-to") + 1] == "-5033067937"
+    assert cmd[cmd.index("--timeout") + 1] == "120000"  # seconds -> milliseconds
+    assert "--params" in cmd
+    params = json.loads(cmd[cmd.index("--params") + 1])
+    assert params["sessionKey"] == "agent:main:telegram:group:-5033067937"
+    assert "Lijiang Tower" in params["message"]
+    assert "VICTORY" in params["message"]
+    assert params["idempotencyKey"] == "test-uuid-1234"
+    assert params["deliver"] is True
+    assert params["channel"] == "telegram"
+    assert params["to"] == "-5033067937"
 
 
 @pytest.mark.asyncio
@@ -301,15 +305,15 @@ async def test_agent_cli_message_contains_rendered_prompt(template_file, match_d
         await _fire_agent_cli(match_data)
 
     cmd = mock_exec.call_args[0]
-    message = cmd[cmd.index("--message") + 1]
-    assert "Lijiang Tower" in message
-    assert "VICTORY" in message
-    assert "abc-123" in message
+    params = json.loads(cmd[cmd.index("--params") + 1])
+    assert "Lijiang Tower" in params["message"]
+    assert "VICTORY" in params["message"]
+    assert "abc-123" in params["message"]
 
 
 @pytest.mark.asyncio
-async def test_agent_cli_multiline_prompt_passed_as_single_arg(multiline_template, match_data):
-    """Newlines in the rendered prompt must be passed as a single --message argument."""
+async def test_agent_cli_multiline_prompt_in_json_params(multiline_template, match_data):
+    """Newlines in the rendered prompt are preserved in the JSON --params value."""
     proc = _mock_subprocess()
     with _patch_agent_cli_vars(), \
          patch("shutil.which", return_value="/usr/bin/openclaw"), \
@@ -317,8 +321,8 @@ async def test_agent_cli_multiline_prompt_passed_as_single_arg(multiline_templat
         await _fire_agent_cli(match_data)
 
     cmd = mock_exec.call_args[0]
-    message = cmd[cmd.index("--message") + 1]
-    # The message should contain actual newlines, not escaped ones
+    params = json.loads(cmd[cmd.index("--params") + 1])
+    message = params["message"]
     assert "\n" in message
     assert "Line 1: Lijiang Tower" in message
     assert "Line 2: VICTORY" in message
@@ -327,7 +331,7 @@ async def test_agent_cli_multiline_prompt_passed_as_single_arg(multiline_templat
 
 @pytest.mark.asyncio
 async def test_agent_cli_no_deliver_without_channel(template_file, match_data):
-    """--deliver and --reply-to are omitted when AGENT_CHANNEL is not set."""
+    """deliver/channel/to are omitted from params when AGENT_CHANNEL is not set."""
     proc = _mock_subprocess()
     with _patch_agent_cli_vars(channel=None, reply_to=None), \
          patch("shutil.which", return_value="/usr/bin/openclaw"), \
@@ -335,14 +339,18 @@ async def test_agent_cli_no_deliver_without_channel(template_file, match_data):
         await _fire_agent_cli(match_data)
 
     cmd = mock_exec.call_args[0]
-    assert "--deliver" not in cmd
-    assert "--channel" not in cmd
-    assert "--reply-to" not in cmd
+    params = json.loads(cmd[cmd.index("--params") + 1])
+    assert "deliver" not in params
+    assert "channel" not in params
+    assert "to" not in params
+    # sessionKey and message should still be present
+    assert "sessionKey" in params
+    assert "message" in params
 
 
 @pytest.mark.asyncio
 async def test_agent_cli_channel_without_reply_to(template_file, match_data):
-    """--deliver and --channel present but no --reply-to when AGENT_REPLY_TO is unset."""
+    """deliver and channel present but no 'to' when AGENT_REPLY_TO is unset."""
     proc = _mock_subprocess()
     with _patch_agent_cli_vars(channel="telegram", reply_to=None), \
          patch("shutil.which", return_value="/usr/bin/openclaw"), \
@@ -350,9 +358,10 @@ async def test_agent_cli_channel_without_reply_to(template_file, match_data):
         await _fire_agent_cli(match_data)
 
     cmd = mock_exec.call_args[0]
-    assert "--deliver" in cmd
-    assert "--channel" in cmd
-    assert "--reply-to" not in cmd
+    params = json.loads(cmd[cmd.index("--params") + 1])
+    assert params["deliver"] is True
+    assert params["channel"] == "telegram"
+    assert "to" not in params
 
 
 @pytest.mark.asyncio

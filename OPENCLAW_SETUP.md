@@ -6,7 +6,7 @@ Two notification modes are available:
 
 | Mode | How it works | Session context |
 |------|-------------|-----------------|
-| **Agent CLI** | Invokes `openclaw agent` via CLI | Full — runs within the existing session with complete conversation history |
+| **Agent CLI** | Invokes `openclaw gateway call agent` via CLI | Full — runs within the existing session with complete conversation history, and persists the result back into the session |
 | **Webhook** | POSTs to the `/hooks/agent` HTTP endpoint | Isolated — runs an independent agent turn and posts a summary into the session |
 
 Only one mode should be active at a time. If both are configured, the agent-CLI mode takes priority.
@@ -56,12 +56,12 @@ The template uses [Jinja2](https://jinja.palletsprojects.com/) syntax. The `matc
 
 ## Agent-CLI mode (recommended)
 
-Runs a turn within an existing OpenClaw session so the agent has full conversation history and context. Requires the `openclaw` CLI to be available on the server's `PATH`.
+Uses the `openclaw gateway call agent` RPC method to run a turn within an existing OpenClaw session. The agent has full conversation history and context, and the result is persisted back into the session. Requires the `openclaw` CLI to be available on the server's `PATH`.
 
 ### Environment variables
 
 ```bash
-# Required — the session key (or ID) to run the agent turn in
+# Required — the session key to run the agent turn in
 OPENCLAW_AGENT_SESSION_ID=agent:main:telegram:group:-5033067937
 
 # Optional — deliver the response to a messaging channel
@@ -79,9 +79,10 @@ OPENCLAW_AGENT_TIMEOUT=120
 1. When `submit_match` is called, the match is saved to the database
 2. The source filter is checked (if configured)
 3. The Jinja2 template is rendered with the match data
-4. `openclaw agent --session-id <id> --message <prompt>` is invoked
+4. `openclaw gateway call agent` is invoked with `--params` containing the `sessionKey`, `message`, delivery options, and an idempotency key
 5. The agent processes the prompt with full access to the session history and MCP tools
-6. If `OPENCLAW_AGENT_CHANNEL` is set, the response is delivered to that channel (e.g. a Telegram group)
+6. The agent's response is persisted into the session transcript
+7. If `OPENCLAW_AGENT_CHANNEL` is set, the response is delivered to that channel (e.g. a Telegram group)
 
 ---
 

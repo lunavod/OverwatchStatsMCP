@@ -14,9 +14,11 @@ first; if its required env vars are not set the webhook mode is tried.
 """
 
 import asyncio
+import json
 import logging
 import os
 import shutil
+import uuid
 from pathlib import Path
 
 import httpx
@@ -107,7 +109,11 @@ async def _fire_webhook_http(match_data: dict) -> None:
 
 
 async def _fire_agent_cli(match_data: dict) -> None:
-    """Invoke ``openclaw agent`` CLI to run a turn within an existing session."""
+    """Invoke ``openclaw gateway call agent`` to run a turn within an existing session.
+
+    Uses the gateway RPC method with ``sessionKey`` so the turn is both
+    read from and persisted into the correct session.
+    """
     openclaw = shutil.which("openclaw")
     if openclaw is None:
         logger.error("openclaw binary not found on PATH")
@@ -119,16 +125,23 @@ async def _fire_agent_cli(match_data: dict) -> None:
         logger.warning("Skipping agent-cli: %s", exc)
         return
 
-    cmd = [
-        openclaw, "agent",
-        "--session-id", AGENT_SESSION_ID,
-        "--message", prompt,
-        "--timeout", AGENT_TIMEOUT,
-    ]
+    params: dict = {
+        "sessionKey": AGENT_SESSION_ID,
+        "message": prompt,
+        "idempotencyKey": str(uuid.uuid4()),
+    }
     if AGENT_CHANNEL:
-        cmd += ["--deliver", "--channel", AGENT_CHANNEL]
+        params["deliver"] = True
+        params["channel"] = AGENT_CHANNEL
         if AGENT_REPLY_TO:
-            cmd += ["--reply-to", AGENT_REPLY_TO]
+            params["to"] = AGENT_REPLY_TO
+
+    cmd = [
+        openclaw, "gateway", "call", "agent",
+        "--expect-final",
+        "--timeout", str(int(AGENT_TIMEOUT) * 1000),
+        "--params", json.dumps(params),
+    ]
 
     try:
         proc = await asyncio.create_subprocess_exec(
