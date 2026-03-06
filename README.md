@@ -332,3 +332,8 @@ For production deployment on a VPS:
 5. Put a reverse proxy (nginx/caddy) in front for TLS
 
 **Note:** The server currently has no authentication. Restrict access via firewall, VPN, or add an auth layer before exposing publicly.
+
+**Reverse proxy body size:** Screenshot uploads send base64-encoded images in the request body, which can be 10-20MB+ for 4K screenshots. Most reverse proxies reject this by default (nginx allows only 1MB). Increase the limit to allow uploads:
+
+- **Nginx:** `client_max_body_size 50M;` in the `server` or `location` block
+- **Caddy:** `request_body { max_size 50MB }` in the site block
