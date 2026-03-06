@@ -1128,6 +1128,7 @@ async def edit_match(
     screenshots_to_add: list[str] | None = None,
     screenshot_uploads: list[dict] | None = None,
     screenshots_to_remove: list[str] | None = None,
+    player_edits: list[dict] | None = None,
 ) -> dict:
     """Edit an existing match's metadata. Only provided fields are updated.
 
@@ -1146,13 +1147,23 @@ async def edit_match(
         screenshot_uploads: List of base64 image uploads, each with keys:
             data (base64-encoded image bytes), filename (optional, used for extension detection)
         screenshots_to_remove: List of screenshot URLs to remove
+        player_edits: List of player stat edits, each a dict with:
+            player_stat_id (required UUID string) and any of:
+            player_name, team (ALLY/ENEMY), role (TANK/DPS/SUPPORT),
+            eliminations, assists, deaths, damage, healing, mitigation (int|null),
+            is_self (bool), hero_name (string to set/change hero, or empty string to clear)
     """
     async with db.async_session() as session:
         async with session.begin():
+            load_options = [joinedload(Match.screenshots)]
+            if player_edits:
+                load_options.append(
+                    joinedload(Match.player_stats).joinedload(PlayerStat.hero_stat)
+                )
             stmt = (
                 select(Match)
                 .where(Match.id == uuid.UUID(match_id))
-                .options(joinedload(Match.screenshots))
+                .options(*load_options)
             )
             match = (await session.execute(stmt)).unique().scalar_one_or_none()
             if not match:
@@ -1189,6 +1200,41 @@ async def edit_match(
             for upload in screenshot_uploads or []:
                 path = _save_screenshot(upload["data"], upload.get("filename"))
                 session.add(Screenshot(match=match, url=path))
+
+            if player_edits:
+                ps_by_id = {str(ps.id): ps for ps in match.player_stats}
+                for pe in player_edits:
+                    ps = ps_by_id.get(pe["player_stat_id"])
+                    if not ps:
+                        continue
+                    if "player_name" in pe:
+                        ps.player_name = pe["player_name"]
+                    if "team" in pe:
+                        ps.team = pe["team"].upper()
+                    if "role" in pe:
+                        ps.role = pe["role"].upper()
+                    if "eliminations" in pe:
+                        ps.eliminations = pe["eliminations"]
+                    if "assists" in pe:
+                        ps.assists = pe["assists"]
+                    if "deaths" in pe:
+                        ps.deaths = pe["deaths"]
+                    if "damage" in pe:
+                        ps.damage = pe["damage"]
+                    if "healing" in pe:
+                        ps.healing = pe["healing"]
+                    if "mitigation" in pe:
+                        ps.mitigation = pe["mitigation"]
+                    if "is_self" in pe:
+                        ps.is_self = pe["is_self"]
+                    if "hero_name" in pe:
+                        if pe["hero_name"]:
+                            if ps.hero_stat:
+                                ps.hero_stat.hero_name = pe["hero_name"]
+                            else:
+                                session.add(HeroStat(player_stat=ps, hero_name=pe["hero_name"]))
+                        elif ps.hero_stat:
+                            await session.delete(ps.hero_stat)
 
     return {"updated": True}
 

@@ -256,6 +256,112 @@ class TestEditMatch:
         result = await edit_match(match_id, notes="hi")
         assert result == {"updated": True}
 
+    async def test_edit_player_name(self):
+        from main import edit_match, get_match
+
+        match_id = await create_test_match()
+        match = await get_match(match_id)
+        ps = match["player_stats"][0]
+        await edit_match(
+            match_id,
+            player_edits=[{"player_stat_id": ps["id"], "player_name": "NewName"}],
+        )
+        match = await get_match(match_id)
+        updated = next(p for p in match["player_stats"] if p["id"] == ps["id"])
+        assert updated["player_name"] == "NewName"
+
+    async def test_edit_player_stats(self):
+        from main import edit_match, get_match
+
+        match_id = await create_test_match()
+        match = await get_match(match_id)
+        ps = match["player_stats"][0]
+        await edit_match(
+            match_id,
+            player_edits=[{
+                "player_stat_id": ps["id"],
+                "team": "enemy",
+                "role": "tank",
+                "eliminations": 99,
+                "deaths": 1,
+            }],
+        )
+        match = await get_match(match_id)
+        updated = next(p for p in match["player_stats"] if p["id"] == ps["id"])
+        assert updated["team"] == "ENEMY"
+        assert updated["role"] == "TANK"
+        assert updated["eliminations"] == 99
+        assert updated["deaths"] == 1
+
+    async def test_edit_player_hero_name(self):
+        from main import edit_match, get_match
+
+        match_id = await create_test_match()
+        match = await get_match(match_id)
+        self_player = next(p for p in match["player_stats"] if p["is_self"])
+        assert self_player["hero_stat"]["hero_name"] == "Ana"
+        await edit_match(
+            match_id,
+            player_edits=[{
+                "player_stat_id": self_player["id"],
+                "hero_name": "Mercy",
+            }],
+        )
+        match = await get_match(match_id)
+        updated = next(p for p in match["player_stats"] if p["id"] == self_player["id"])
+        assert updated["hero_stat"]["hero_name"] == "Mercy"
+
+    async def test_edit_player_clear_hero(self):
+        from main import edit_match, get_match
+
+        match_id = await create_test_match()
+        match = await get_match(match_id)
+        self_player = next(p for p in match["player_stats"] if p["is_self"])
+        await edit_match(
+            match_id,
+            player_edits=[{
+                "player_stat_id": self_player["id"],
+                "hero_name": "",
+            }],
+        )
+        match = await get_match(match_id)
+        updated = next(p for p in match["player_stats"] if p["id"] == self_player["id"])
+        assert updated["hero_stat"] is None
+
+    async def test_edit_player_add_hero(self):
+        from main import edit_match, get_match
+
+        match_id = await create_test_match()
+        match = await get_match(match_id)
+        # Find a player without hero stat
+        no_hero = next(
+            p for p in match["player_stats"]
+            if not p["is_self"] and p["hero_stat"] is None
+        )
+        await edit_match(
+            match_id,
+            player_edits=[{
+                "player_stat_id": no_hero["id"],
+                "hero_name": "Genji",
+            }],
+        )
+        match = await get_match(match_id)
+        updated = next(p for p in match["player_stats"] if p["id"] == no_hero["id"])
+        assert updated["hero_stat"]["hero_name"] == "Genji"
+
+    async def test_edit_player_unknown_id_ignored(self):
+        from main import edit_match
+
+        match_id = await create_test_match()
+        result = await edit_match(
+            match_id,
+            player_edits=[{
+                "player_stat_id": "00000000-0000-0000-0000-000000000000",
+                "player_name": "Ghost",
+            }],
+        )
+        assert result == {"updated": True}
+
 
 # ---------------------------------------------------------------------------
 # delete_match
