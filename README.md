@@ -6,7 +6,8 @@ An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server for t
 
 - **Match tracking** — Record complete 10-player lobbies with per-player stats, hero-specific breakdowns, notes, and screenshots
 - **Flexible querying** — Filter and sort matches by map, mode, queue type, hero, date range, and stats
-- **Match editing** — Update match metadata, notes, backfill flag, and manage screenshots after submission
+- **Match editing** — Update match metadata, player data (names, titles, stats, heroes), and manage screenshots after submission
+- **Player notes** — Attach persistent notes to player usernames (globally, not per-match), surfaced in match details, teammate stats, and player history
 - **Aggregated analytics** — Win rates, averages, and trends grouped by role, map, mode, hero, or time period (supports dual-axis grouping)
 - **Hero detail stats** — Per-hero stat breakdowns with automatic parsing of percentages, durations (MM:SS), and comma-formatted numbers
 - **Teammate tracking** — Win/loss rates with recurring teammates, with name normalization to handle rank suffixes like "(Bronze)"
@@ -144,6 +145,7 @@ Record a completed match with all player stats.
 | `team`         | string  | Yes      | `ALLY` or `ENEMY`                                    |
 | `role`         | string  | Yes      | `TANK`, `DPS`, or `SUPPORT`                          |
 | `player_name`  | string  | Yes      | Player's display name                                |
+| `title`        | string  | No       | Player's title (e.g. competitive rank title)         |
 | `eliminations` | int     | No       | Elimination count                                    |
 | `assists`      | int     | No       | Assist count                                         |
 | `deaths`       | int     | No       | Death count                                          |
@@ -177,6 +179,25 @@ Edit an existing match's metadata. Only provided fields are updated.
 | `source`               | string   | No       | New source identifier                          |
 | `screenshots_to_add`   | string[] | No       | Screenshot URLs to attach                      |
 | `screenshots_to_remove`| string[] | No       | Screenshot URLs to remove                      |
+| `player_edits`         | array    | No       | List of player stat edits (see below)          |
+
+**Player edit object:**
+
+| Key              | Type   | Required | Description                                         |
+|------------------|--------|----------|-----------------------------------------------------|
+| `player_stat_id` | string | Yes      | UUID of the player stat (from `get_match` response)  |
+| `player_name`    | string | No       | New player name                                      |
+| `title`          | string | No       | New title (empty string to clear)                    |
+| `team`           | string | No       | `ALLY` or `ENEMY`                                    |
+| `role`           | string | No       | `TANK`, `DPS`, or `SUPPORT`                          |
+| `eliminations`   | int    | No       | New elimination count                                |
+| `assists`        | int    | No       | New assist count                                     |
+| `deaths`         | int    | No       | New death count                                      |
+| `damage`         | int    | No       | New damage dealt                                     |
+| `healing`        | int    | No       | New healing done                                     |
+| `mitigation`     | int    | No       | New damage mitigated                                 |
+| `is_self`        | bool   | No       | New self flag                                        |
+| `hero_name`      | string | No       | Set/change hero name (empty string to clear hero)    |
 
 ### `list_matches`
 
@@ -223,6 +244,22 @@ Win rates and average stats bucketed by match duration. Parses `MM:SS` duration 
 
 **Filters:** `queue_type`, `from_date`, `to_date`, `bucket_size` (seconds, default 120)
 
+### `set_player_note`
+
+Set or update a global note for a player by username. Pass an empty string to delete the note.
+
+**Parameters:** `player_name` (string), `note` (string)
+
+### `get_player_note`
+
+Get the note for a player by username. Returns `null` if no note exists.
+
+**Parameters:** `player_name` (string)
+
+### `list_player_notes`
+
+List all player notes.
+
 ### `delete_match`
 
 Delete a match and all associated data (player stats, hero stats, screenshots) by UUID. Cascading delete.
@@ -244,7 +281,7 @@ See [OPENCLAW_SETUP.md](OPENCLAW_SETUP.md) for full configuration details includ
 
 ## Database Schema
 
-Five tables with cascading deletes:
+Six tables (five with cascading deletes, one standalone):
 
 ```
 matches
@@ -252,13 +289,16 @@ matches
   │     └── hero_stats
   │           └── hero_stat_values
   └── screenshots
+
+player_notes (standalone, keyed by username)
 ```
 
 - **matches** — Map, mode, queue type, result, duration, notes, is_backfill, timestamps
-- **player_stats** — Per-player per-match: team, role, name, 6 stat columns, is_self flag
+- **player_stats** — Per-player per-match: team, role, name, title, 6 stat columns, is_self flag
 - **hero_stats** — Links a player_stat to a hero name (1:1)
 - **hero_stat_values** — Arbitrary key-value hero stats (label/value/is_featured)
 - **screenshots** — Screenshot URLs attached to a match
+- **player_notes** — Global notes attached to player usernames
 
 Migrations are managed with Alembic. To create a new migration after modifying models:
 
@@ -295,9 +335,10 @@ uv run pytest -k "test_filter"             # keyword match
 tests/
 ├── conftest.py            # Testcontainers setup, DB override, per-test cleanup
 ├── factories.py           # Test data helpers (make_players, create_test_match)
-├── test_match_crud.py     # Submit, get, edit, delete (30 tests)
+├── test_match_crud.py     # Submit, get, edit, delete (39 tests)
 ├── test_list_matches.py   # Filtering, sorting, pagination (16 tests)
 ├── test_analytics.py      # Stats, heroes, teammates, rankings, duration, history (40 tests)
+├── test_player_notes.py   # Player notes CRUD and integration (11 tests)
 ├── test_screenshots.py    # Screenshot upload and serving
 └── test_webhook.py        # Webhook and agent-CLI notification (33 tests)
 ```
@@ -316,7 +357,7 @@ tests/
 ├── alembic/
 │   ├── env.py                 # Async migration environment
 │   └── versions/              # Migration scripts
-├── tests/                     # Test suite (86 tests, requires Docker)
+├── tests/                     # Test suite (151 tests, requires Docker)
 ├── docker-compose.yml         # PostgreSQL service
 └── pyproject.toml             # Project metadata and dependencies
 ```
