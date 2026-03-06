@@ -1,7 +1,22 @@
-"""OpenClaw webhook integration — fires after match creation."""
+"""OpenClaw integration — fires after match creation.
 
+Two notification modes are available:
+
+1. **Webhook** (`OPENCLAW_WEBHOOK_*`) — POSTs to the /hooks/agent endpoint.
+   Runs an *isolated* agent turn and posts a summary into the session.
+
+2. **Agent CLI** (`OPENCLAW_AGENT_*`) — Invokes ``openclaw agent`` via CLI.
+   Runs a turn *within* an existing session, so the agent has full
+   conversation history and context.
+
+Only one mode should be active at a time.  The agent-CLI mode is checked
+first; if its required env vars are not set the webhook mode is tried.
+"""
+
+import asyncio
 import logging
 import os
+import shutil
 from pathlib import Path
 
 import httpx
@@ -9,13 +24,27 @@ from jinja2 import BaseLoader, Environment
 
 logger = logging.getLogger(__name__)
 
-WEBHOOK_URL = os.getenv("OPENCLAW_WEBHOOK_URL")
-WEBHOOK_TOKEN = os.getenv("OPENCLAW_WEBHOOK_TOKEN")
-WEBHOOK_SESSION_KEY = os.getenv("OPENCLAW_WEBHOOK_SESSION_KEY")
+# -- Shared ------------------------------------------------------------------
+
 WEBHOOK_SOURCE_FILTER = os.getenv("OPENCLAW_WEBHOOK_SOURCE_FILTER", "")
 WEBHOOK_TEMPLATE_PATH = Path(
     os.getenv("OPENCLAW_WEBHOOK_TEMPLATE", "webhook_prompt.j2")
 )
+
+# -- Webhook mode -------------------------------------------------------------
+
+WEBHOOK_URL = os.getenv("OPENCLAW_WEBHOOK_URL")
+WEBHOOK_TOKEN = os.getenv("OPENCLAW_WEBHOOK_TOKEN")
+WEBHOOK_SESSION_KEY = os.getenv("OPENCLAW_WEBHOOK_SESSION_KEY")
+WEBHOOK_CHANNEL = os.getenv("OPENCLAW_WEBHOOK_CHANNEL")
+WEBHOOK_TO = os.getenv("OPENCLAW_WEBHOOK_TO")
+
+# -- Agent-CLI mode -----------------------------------------------------------
+
+AGENT_SESSION_ID = os.getenv("OPENCLAW_AGENT_SESSION_ID")
+AGENT_CHANNEL = os.getenv("OPENCLAW_AGENT_CHANNEL")
+AGENT_REPLY_TO = os.getenv("OPENCLAW_AGENT_REPLY_TO")
+AGENT_TIMEOUT = os.getenv("OPENCLAW_AGENT_TIMEOUT", "120")
 
 
 def _source_allowed(source: str) -> bool:
@@ -44,14 +73,8 @@ def _render_prompt(match_data: dict) -> str:
     return template.render(match=match_data)
 
 
-async def fire_webhook(match_data: dict) -> None:
+async def _fire_webhook_http(match_data: dict) -> None:
     """POST to the OpenClaw /hooks/agent endpoint with rendered prompt."""
-    if not WEBHOOK_URL or not WEBHOOK_TOKEN:
-        return
-
-    if not _source_allowed(match_data.get("source", "")):
-        return
-
     try:
         prompt = _render_prompt(match_data)
     except FileNotFoundError as exc:
@@ -64,6 +87,10 @@ async def fire_webhook(match_data: dict) -> None:
     }
     if WEBHOOK_SESSION_KEY:
         payload["sessionKey"] = WEBHOOK_SESSION_KEY
+    if WEBHOOK_CHANNEL:
+        payload["channel"] = WEBHOOK_CHANNEL
+    if WEBHOOK_TO:
+        payload["to"] = WEBHOOK_TO
 
     headers = {
         "Authorization": f"Bearer {WEBHOOK_TOKEN}",
@@ -77,3 +104,61 @@ async def fire_webhook(match_data: dict) -> None:
             logger.info("Webhook fired (status %s)", resp.status_code)
     except httpx.HTTPError as exc:
         logger.error("Webhook request failed: %s", exc)
+
+
+async def _fire_agent_cli(match_data: dict) -> None:
+    """Invoke ``openclaw agent`` CLI to run a turn within an existing session."""
+    openclaw = shutil.which("openclaw")
+    if openclaw is None:
+        logger.error("openclaw binary not found on PATH")
+        return
+
+    try:
+        prompt = _render_prompt(match_data)
+    except FileNotFoundError as exc:
+        logger.warning("Skipping agent-cli: %s", exc)
+        return
+
+    cmd = [
+        openclaw, "agent",
+        "--session-id", AGENT_SESSION_ID,
+        "--message", prompt,
+        "--timeout", AGENT_TIMEOUT,
+    ]
+    if AGENT_CHANNEL:
+        cmd += ["--deliver", "--channel", AGENT_CHANNEL]
+        if AGENT_REPLY_TO:
+            cmd += ["--reply-to", AGENT_REPLY_TO]
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode == 0:
+            logger.info("Agent CLI turn completed (exit 0)")
+        else:
+            logger.error(
+                "Agent CLI failed (exit %s): %s",
+                proc.returncode,
+                stderr.decode(errors="replace").strip(),
+            )
+    except OSError as exc:
+        logger.error("Agent CLI exec error: %s", exc)
+
+
+async def fire_webhook(match_data: dict) -> None:
+    """Notify OpenClaw about a new match.
+
+    Uses agent-CLI mode if configured, otherwise falls back to webhook mode.
+    """
+    if not _source_allowed(match_data.get("source", "")):
+        return
+
+    if AGENT_SESSION_ID:
+        asyncio.create_task(_fire_agent_cli(match_data))
+    elif WEBHOOK_URL and WEBHOOK_TOKEN:
+        await _fire_webhook_http(match_data)
+

@@ -227,17 +227,20 @@ Win rates and average stats bucketed by match duration. Parses `MM:SS` duration 
 
 Delete a match and all associated data (player stats, hero stats, screenshots) by UUID. Cascading delete.
 
-## OpenClaw Webhook Integration
+## OpenClaw Integration
 
-The server can notify an OpenClaw agent whenever a new match is submitted. The agent receives a customisable prompt (Jinja2 template) with match details and can use the MCP tools to analyse the match.
+The server can notify an [OpenClaw](https://docs.openclaw.ai) agent whenever a new match is submitted. Two modes are available:
 
-**Quick setup:**
+- **Agent CLI** (recommended) — runs a turn within an existing session with full conversation history
+- **Webhook** — POSTs to the `/hooks/agent` endpoint for an isolated agent turn
 
-1. Set `OPENCLAW_WEBHOOK_URL` and `OPENCLAW_WEBHOOK_TOKEN` in `.env`
+**Quick setup (agent-CLI mode):**
+
+1. Set `OPENCLAW_AGENT_SESSION_ID` in `.env` to target an existing session
 2. Copy `webhook_prompt.j2.example` to `webhook_prompt.j2` and customise
-3. Optionally set `OPENCLAW_WEBHOOK_SESSION_KEY` for session continuity
+3. Optionally set `OPENCLAW_AGENT_CHANNEL` and `OPENCLAW_AGENT_REPLY_TO` for delivery
 
-See [OPENCLAW_SETUP.md](OPENCLAW_SETUP.md) for full configuration details.
+See [OPENCLAW_SETUP.md](OPENCLAW_SETUP.md) for full configuration details including webhook mode.
 
 ## Database Schema
 
@@ -294,7 +297,9 @@ tests/
 ├── factories.py           # Test data helpers (make_players, create_test_match)
 ├── test_match_crud.py     # Submit, get, edit, delete (30 tests)
 ├── test_list_matches.py   # Filtering, sorting, pagination (16 tests)
-└── test_analytics.py      # Stats, heroes, teammates, rankings, duration, history (40 tests)
+├── test_analytics.py      # Stats, heroes, teammates, rankings, duration, history (40 tests)
+├── test_screenshots.py    # Screenshot upload and serving
+└── test_webhook.py        # Webhook and agent-CLI notification (33 tests)
 ```
 
 ## Project Structure
@@ -304,9 +309,9 @@ tests/
 ├── main.py                    # MCP server — all tools and helpers
 ├── models.py                  # SQLAlchemy ORM models
 ├── db.py                      # Database engine and session factory
-├── webhook.py                 # OpenClaw webhook integration
-├── webhook_prompt.j2.example  # Example Jinja2 template for webhook prompt
-├── OPENCLAW_SETUP.md          # OpenClaw webhook setup guide
+├── webhook.py                 # OpenClaw integration (agent-CLI and webhook modes)
+├── webhook_prompt.j2.example  # Example Jinja2 template for notification prompt
+├── OPENCLAW_SETUP.md          # OpenClaw integration setup guide
 ├── alembic.ini                # Alembic configuration
 ├── alembic/
 │   ├── env.py                 # Async migration environment
