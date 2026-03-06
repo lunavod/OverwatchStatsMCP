@@ -94,6 +94,27 @@ class TestSubmitMatch:
         assert self_player["deaths"] == 3
         assert self_player["damage"] == 15000
 
+    async def test_stores_player_title(self):
+        from main import get_match
+
+        players = make_players()
+        players[0]["title"] = "Champion"
+        players[1]["title"] = "Gold"
+        match_id = await create_test_match(players=players)
+        match = await get_match(match_id)
+        self_player = next(p for p in match["player_stats"] if p["is_self"])
+        assert self_player["title"] == "Champion"
+        ally1 = next(p for p in match["player_stats"] if p["player_name"] == "Ally1")
+        assert ally1["title"] == "Gold"
+
+    async def test_title_defaults_to_none(self):
+        from main import get_match
+
+        match_id = await create_test_match()
+        match = await get_match(match_id)
+        for ps in match["player_stats"]:
+            assert ps["title"] is None
+
 
 # ---------------------------------------------------------------------------
 # get_match
@@ -348,6 +369,37 @@ class TestEditMatch:
         match = await get_match(match_id)
         updated = next(p for p in match["player_stats"] if p["id"] == no_hero["id"])
         assert updated["hero_stat"]["hero_name"] == "Genji"
+
+    async def test_edit_player_title(self):
+        from main import edit_match, get_match
+
+        match_id = await create_test_match()
+        match = await get_match(match_id)
+        ps = match["player_stats"][0]
+        await edit_match(
+            match_id,
+            player_edits=[{"player_stat_id": ps["id"], "title": "Grandmaster"}],
+        )
+        match = await get_match(match_id)
+        updated = next(p for p in match["player_stats"] if p["id"] == ps["id"])
+        assert updated["title"] == "Grandmaster"
+
+    async def test_edit_player_clear_title(self):
+        from main import edit_match, get_match
+
+        players = make_players()
+        players[0]["title"] = "Champion"
+        match_id = await create_test_match(players=players)
+        match = await get_match(match_id)
+        ps = next(p for p in match["player_stats"] if p["is_self"])
+        assert ps["title"] == "Champion"
+        await edit_match(
+            match_id,
+            player_edits=[{"player_stat_id": ps["id"], "title": ""}],
+        )
+        match = await get_match(match_id)
+        updated = next(p for p in match["player_stats"] if p["id"] == ps["id"])
+        assert updated["title"] is None
 
     async def test_edit_player_unknown_id_ignored(self):
         from main import edit_match

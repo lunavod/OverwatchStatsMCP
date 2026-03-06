@@ -189,6 +189,7 @@ async def submit_match(
         result: VICTORY, DEFEAT, or UNKNOWN
         players: Array of 10 player objects with keys:
             team (ALLY/ENEMY), role (TANK/DPS/SUPPORT), player_name,
+            title (optional string, e.g. player's competitive title),
             eliminations, assists, deaths, damage, healing, mitigation (all int|null),
             is_self (bool, default false),
             hero (optional dict with hero_name and stats list of {label, value, is_featured})
@@ -221,6 +222,7 @@ async def submit_match(
                     team=p["team"].upper(),
                     role=p["role"].upper(),
                     player_name=p["player_name"],
+                    title=p.get("title"),
                     eliminations=p.get("eliminations"),
                     assists=p.get("assists"),
                     deaths=p.get("deaths"),
@@ -320,6 +322,7 @@ async def get_match(match_id: str) -> dict:
                 "team": ps.team,
                 "role": ps.role,
                 "player_name": ps.player_name,
+                "title": ps.title,
                 "player_note": notes_map.get(ps.player_name),
                 "eliminations": ps.eliminations,
                 "assists": ps.assists,
@@ -1165,9 +1168,10 @@ async def edit_match(
         screenshots_to_remove: List of screenshot URLs to remove
         player_edits: List of player stat edits, each a dict with:
             player_stat_id (required UUID string) and any of:
-            player_name, team (ALLY/ENEMY), role (TANK/DPS/SUPPORT),
-            eliminations, assists, deaths, damage, healing, mitigation (int|null),
-            is_self (bool), hero_name (string to set/change hero, or empty string to clear)
+            player_name, title (string or empty string to clear), team (ALLY/ENEMY),
+            role (TANK/DPS/SUPPORT), eliminations, assists, deaths, damage, healing,
+            mitigation (int|null), is_self (bool),
+            hero_name (string to set/change hero, or empty string to clear)
     """
     async with db.async_session() as session:
         async with session.begin():
@@ -1225,6 +1229,8 @@ async def edit_match(
                         continue
                     if "player_name" in pe:
                         ps.player_name = pe["player_name"]
+                    if "title" in pe:
+                        ps.title = pe["title"] or None
                     if "team" in pe:
                         ps.team = pe["team"].upper()
                     if "role" in pe:
