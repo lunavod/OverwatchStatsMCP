@@ -1,4 +1,6 @@
+import asyncio
 import base64
+import logging
 import os
 import uuid
 from datetime import datetime
@@ -13,6 +15,8 @@ from starlette.staticfiles import StaticFiles
 import db
 from mcp.server.fastmcp import FastMCP
 from models import HeroStat, HeroStatValue, Match, PlayerNote, PlayerStat, Screenshot
+from scoreboard import render_scoreboard
+from telegram import send_scoreboard as send_telegram_scoreboard, is_configured as telegram_configured
 from webhook import fire_webhook
 
 UPLOADS_DIR = Path(os.getenv("UPLOADS_DIR", "uploads"))
@@ -265,7 +269,39 @@ async def submit_match(
                 path = _save_screenshot(upload["data"], upload.get("filename"))
                 session.add(Screenshot(match=match, url=path))
 
-    match_result = {"match_id": str(match.id)}
+    match_id_str = str(match.id)
+    match_result = {"match_id": match_id_str}
+
+    # Generate scoreboard images
+    try:
+        match_data = await get_match(match_id_str)
+        if "error" not in match_data:
+            scoreboard_dir = UPLOADS_DIR / "scoreboards"
+            scoreboard_dir.mkdir(exist_ok=True)
+            out_path = scoreboard_dir / f"{match.id}.png"
+            outputs = render_scoreboard(match_data, str(out_path))
+
+            scoreboard_url = f"/uploads/scoreboards/{match.id}.png"
+            hero_stats_url = None
+            if len(outputs) > 1:
+                hero_stats_url = f"/uploads/scoreboards/{match.id}_hero.png"
+
+            async with db.async_session() as session:
+                async with session.begin():
+                    stmt = select(Match).where(Match.id == match.id)
+                    m = (await session.execute(stmt)).scalar_one()
+                    m.scoreboard_url = scoreboard_url
+                    m.hero_stats_url = hero_stats_url
+
+            match_result["scoreboard_url"] = scoreboard_url
+            if hero_stats_url:
+                match_result["hero_stats_url"] = hero_stats_url
+
+            # Send to Telegram (fire and forget)
+            if telegram_configured():
+                asyncio.create_task(send_telegram_scoreboard(outputs))
+    except Exception:
+        logging.getLogger(__name__).exception("Scoreboard generation failed")
 
     await fire_webhook({
         **match_result,
@@ -322,6 +358,8 @@ async def get_match(match_id: str) -> dict:
         "notes": match.notes,
         "is_backfill": match.is_backfill,
         "source": match.source,
+        "scoreboard_url": match.scoreboard_url,
+        "hero_stats_url": match.hero_stats_url,
         "screenshots": [s.url for s in match.screenshots],
         "player_stats": [
             {
@@ -486,6 +524,8 @@ async def list_matches(
                 "created_at": m.created_at.isoformat() if m.created_at else None,
                 "notes": m.notes,
                 "is_backfill": m.is_backfill,
+                "scoreboard_url": m.scoreboard_url,
+                "hero_stats_url": m.hero_stats_url,
                 "sort_value": int(sv) if sv is not None else None,
             }
             matches_out.append(d)
@@ -503,6 +543,8 @@ async def list_matches(
                     "created_at": m.created_at.isoformat() if m.created_at else None,
                     "notes": m.notes,
                     "is_backfill": m.is_backfill,
+                    "scoreboard_url": m.scoreboard_url,
+                    "hero_stats_url": m.hero_stats_url,
                 }
             )
 
