@@ -115,6 +115,38 @@ class TestSubmitMatch:
         for ps in match["player_stats"]:
             assert ps["title"] is None
 
+    async def test_stores_player_hero(self):
+        from main import get_match
+
+        players = make_players()
+        players[1]["hero_name"] = "Reinhardt"
+        players[5]["hero_name"] = "genji"  # case-insensitive input
+        match_id = await create_test_match(players=players)
+        match = await get_match(match_id)
+        ally1 = next(p for p in match["player_stats"] if p["player_name"] == "Ally1")
+        assert ally1["hero"] == "Reinhardt"
+        enemy1 = next(p for p in match["player_stats"] if p["player_name"] == "Enemy1")
+        assert enemy1["hero"] == "genji"
+
+    async def test_hero_auto_populated_from_hero_dict(self):
+        from main import get_match
+
+        match_id = await create_test_match()
+        match = await get_match(match_id)
+        self_player = next(p for p in match["player_stats"] if p["is_self"])
+        # Self player has hero dict with hero_name="Ana", should auto-populate hero field
+        assert self_player["hero"] == "Ana"
+
+    async def test_hero_defaults_to_none(self):
+        from main import get_match
+
+        match_id = await create_test_match()
+        match = await get_match(match_id)
+        # Non-self players without hero_name should have None
+        non_self = [p for p in match["player_stats"] if not p["is_self"]]
+        for ps in non_self:
+            assert ps["hero"] is None
+
 
 # ---------------------------------------------------------------------------
 # get_match
@@ -400,6 +432,37 @@ class TestEditMatch:
         match = await get_match(match_id)
         updated = next(p for p in match["player_stats"] if p["id"] == ps["id"])
         assert updated["title"] is None
+
+    async def test_edit_player_hero(self):
+        from main import edit_match, get_match
+
+        match_id = await create_test_match()
+        match = await get_match(match_id)
+        ps = match["player_stats"][1]  # non-self player
+        await edit_match(
+            match_id,
+            player_edits=[{"player_stat_id": ps["id"], "hero": "Mercy"}],
+        )
+        match = await get_match(match_id)
+        updated = next(p for p in match["player_stats"] if p["id"] == ps["id"])
+        assert updated["hero"] == "Mercy"
+
+    async def test_edit_player_clear_hero_field(self):
+        from main import edit_match, get_match
+
+        players = make_players()
+        players[1]["hero_name"] = "Genji"
+        match_id = await create_test_match(players=players)
+        match = await get_match(match_id)
+        ps = next(p for p in match["player_stats"] if p["player_name"] == "Ally1")
+        assert ps["hero"] == "Genji"
+        await edit_match(
+            match_id,
+            player_edits=[{"player_stat_id": ps["id"], "hero": ""}],
+        )
+        match = await get_match(match_id)
+        updated = next(p for p in match["player_stats"] if p["id"] == ps["id"])
+        assert updated["hero"] is None
 
     async def test_edit_player_unknown_id_ignored(self):
         from main import edit_match

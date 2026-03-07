@@ -50,6 +50,7 @@ class PlayerStat(Base):
     mitigation: Mapped[int | None] = mapped_column(Integer)
     is_self: Mapped[bool] = mapped_column(Boolean, default=False)
     title: Mapped[str | None] = mapped_column(String, nullable=True)
+    hero: Mapped[str | None] = mapped_column(String, nullable=True)
 
     match: Mapped["Match"] = relationship(back_populates="player_stats")
     hero_stat: Mapped["HeroStat | None"] = relationship(

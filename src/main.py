@@ -190,9 +190,10 @@ async def submit_match(
         players: Array of 10 player objects with keys:
             team (ALLY/ENEMY), role (TANK/DPS/SUPPORT), player_name,
             title (optional string, e.g. player's competitive title),
+            hero_name (optional string, hero played — case-insensitive),
             eliminations, assists, deaths, damage, healing, mitigation (all int|null),
             is_self (bool, default false),
-            hero (optional dict with hero_name and stats list of {label, value, is_featured})
+            hero (optional dict with hero_name and stats list of {label, value, is_featured} — for detailed self-player hero stats)
         played_at: Optional ISO 8601 timestamp
         notes: Optional free-text notes about the match
         is_backfill: Whether this match was backfilled from historical data (default false)
@@ -217,12 +218,18 @@ async def submit_match(
             session.add(match)
 
             for p in players:
+                # Resolve hero name: explicit hero_name field takes priority,
+                # falls back to hero dict's hero_name if present
+                hero_dict = p.get("hero")
+                hero_name_raw = p.get("hero_name") or (hero_dict["hero_name"] if hero_dict else None)
+
                 ps = PlayerStat(
                     match=match,
                     team=p["team"].upper(),
                     role=p["role"].upper(),
                     player_name=p["player_name"],
                     title=p.get("title"),
+                    hero=hero_name_raw if hero_name_raw else None,
                     eliminations=p.get("eliminations"),
                     assists=p.get("assists"),
                     deaths=p.get("deaths"),
@@ -233,7 +240,7 @@ async def submit_match(
                 )
                 session.add(ps)
 
-                hero = p.get("hero")
+                hero = hero_dict
                 if hero:
                     hs = HeroStat(
                         player_stat=ps,
@@ -323,6 +330,7 @@ async def get_match(match_id: str) -> dict:
                 "role": ps.role,
                 "player_name": ps.player_name,
                 "title": ps.title,
+                "hero": ps.hero,
                 "player_note": notes_map.get(ps.player_name),
                 "eliminations": ps.eliminations,
                 "assists": ps.assists,
@@ -1193,10 +1201,12 @@ async def edit_match(
         screenshots_to_remove: List of screenshot URLs to remove
         player_edits: List of player stat edits, each a dict with:
             player_stat_id (required UUID string) and any of:
-            player_name, title (string or empty string to clear), team (ALLY/ENEMY),
-            role (TANK/DPS/SUPPORT), eliminations, assists, deaths, damage, healing,
-            mitigation (int|null), is_self (bool),
-            hero_name (string to set/change hero, or empty string to clear)
+            player_name, title (string or empty string to clear),
+            hero (string or empty string to clear — hero played),
+            team (ALLY/ENEMY), role (TANK/DPS/SUPPORT),
+            eliminations, assists, deaths, damage, healing, mitigation (int|null),
+            is_self (bool),
+            hero_name (string to set/change detailed hero stat, or empty string to clear)
     """
     async with db.async_session() as session:
         async with session.begin():
@@ -1256,6 +1266,8 @@ async def edit_match(
                         ps.player_name = pe["player_name"]
                     if "title" in pe:
                         ps.title = pe["title"] or None
+                    if "hero" in pe:
+                        ps.hero = pe["hero"] or None
                     if "team" in pe:
                         ps.team = pe["team"].upper()
                     if "role" in pe:

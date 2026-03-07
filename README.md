@@ -146,6 +146,7 @@ Record a completed match with all player stats.
 | `role`         | string  | Yes      | `TANK`, `DPS`, or `SUPPORT`                          |
 | `player_name`  | string  | Yes      | Player's display name                                |
 | `title`        | string  | No       | Player's title (e.g. competitive rank title)         |
+| `hero_name`    | string  | No       | Hero played (auto-populated from `hero` dict if not set) |
 | `eliminations` | int     | No       | Elimination count                                    |
 | `assists`      | int     | No       | Assist count                                         |
 | `deaths`       | int     | No       | Death count                                          |
@@ -188,6 +189,7 @@ Edit an existing match's metadata. Only provided fields are updated.
 | `player_stat_id` | string | Yes      | UUID of the player stat (from `get_match` response)  |
 | `player_name`    | string | No       | New player name                                      |
 | `title`          | string | No       | New title (empty string to clear)                    |
+| `hero`           | string | No       | Hero played (empty string to clear)                  |
 | `team`           | string | No       | `ALLY` or `ENEMY`                                    |
 | `role`           | string | No       | `TANK`, `DPS`, or `SUPPORT`                          |
 | `eliminations`   | int    | No       | New elimination count                                |
@@ -294,7 +296,7 @@ player_notes (standalone, keyed by username)
 ```
 
 - **matches** — Map, mode, queue type, result, duration, notes, is_backfill, timestamps
-- **player_stats** — Per-player per-match: team, role, name, title, 6 stat columns, is_self flag
+- **player_stats** — Per-player per-match: team, role, name, title, hero, 6 stat columns, is_self flag
 - **hero_stats** — Links a player_stat to a hero name (1:1)
 - **hero_stat_values** — Arbitrary key-value hero stats (label/value/is_featured)
 - **screenshots** — Screenshot URLs attached to a match
@@ -335,7 +337,7 @@ uv run pytest -k "test_filter"             # keyword match
 tests/
 ├── conftest.py            # Testcontainers setup, DB override, per-test cleanup
 ├── factories.py           # Test data helpers (make_players, create_test_match)
-├── test_match_crud.py     # Submit, get, edit, delete (39 tests)
+├── test_match_crud.py     # Submit, get, edit, delete (44 tests)
 ├── test_list_matches.py   # Filtering, sorting, pagination (21 tests)
 ├── test_analytics.py      # Stats, heroes, teammates, rankings, duration, history (42 tests)
 ├── test_player_notes.py   # Player notes CRUD and integration (11 tests)
@@ -352,7 +354,7 @@ tests/
 │   ├── models.py              # SQLAlchemy ORM models
 │   ├── db.py                  # Database engine and session factory
 │   └── webhook.py             # OpenClaw integration (agent-CLI and webhook modes)
-├── tests/                     # Test suite (157 tests, requires Docker)
+├── tests/                     # Test suite (162 tests, requires Docker)
 ├── alembic/
 │   ├── env.py                 # Async migration environment
 │   └── versions/              # Migration scripts
