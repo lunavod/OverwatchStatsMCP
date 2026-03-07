@@ -212,7 +212,7 @@ List matches with filtering, sorting, and pagination.
 Aggregated stats for the self-player. Win rates, averages across all 6 stat categories.
 
 **Grouping:** `group_by` and optional `group_by_2` — supports `role`, `map`, `mode`, `hero`, `week`, `day`, `hour`, `weekday`.
-**Filters:** `queue_type`, `from_date`, `to_date`, `last_n`
+**Filters:** `queue_type`, `from_date`, `to_date`, `last_n`, `player_name`
 
 ### `get_hero_detail_stats`
 
@@ -337,7 +337,7 @@ tests/
 ├── factories.py           # Test data helpers (make_players, create_test_match)
 ├── test_match_crud.py     # Submit, get, edit, delete (39 tests)
 ├── test_list_matches.py   # Filtering, sorting, pagination (21 tests)
-├── test_analytics.py      # Stats, heroes, teammates, rankings, duration, history (40 tests)
+├── test_analytics.py      # Stats, heroes, teammates, rankings, duration, history (42 tests)
 ├── test_player_notes.py   # Player notes CRUD and integration (11 tests)
 ├── test_screenshots.py    # Screenshot upload and serving
 └── test_webhook.py        # Webhook and agent-CLI notification (33 tests)
@@ -357,7 +357,7 @@ tests/
 ├── alembic/
 │   ├── env.py                 # Async migration environment
 │   └── versions/              # Migration scripts
-├── tests/                     # Test suite (155 tests, requires Docker)
+├── tests/                     # Test suite (157 tests, requires Docker)
 ├── docker-compose.yml         # PostgreSQL service
 └── pyproject.toml             # Project metadata and dependencies
 ```

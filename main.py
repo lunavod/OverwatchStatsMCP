@@ -6,7 +6,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from sqlalchemy import Float, Integer, String, case, cast, delete, func, select
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import aliased, joinedload
 from starlette.routing import Mount
 from starlette.staticfiles import StaticFiles
 
@@ -509,6 +509,7 @@ async def get_stats_summary(
     from_date: str | None = None,
     to_date: str | None = None,
     last_n: int | None = None,
+    player_name: str | None = None,
 ) -> dict:
     """Get aggregated stats for the logged-in player (is_self=True).
 
@@ -519,6 +520,7 @@ async def get_stats_summary(
         from_date: ISO 8601 — only matches on or after this date
         to_date: ISO 8601 — only matches on or before this date
         last_n: Only consider the most recent N matches (after other filters)
+        player_name: Filter to matches containing this player (case-insensitive, any team)
     """
     if group_by_2 and not group_by:
         return {"error": "group_by_2 requires group_by to be set"}
@@ -561,6 +563,14 @@ async def get_stats_summary(
 
         stmt = _apply_match_filters(stmt, queue_type, from_date, to_date)
 
+        if player_name:
+            _PS = aliased(PlayerStat)
+            player_sub = (
+                select(_PS.match_id)
+                .where(func.lower(_PS.player_name) == player_name.lower())
+            )
+            stmt = stmt.where(Match.id.in_(player_sub))
+
         # A1: last_n — restrict to N most recent matches
         if last_n is not None:
             recent_sub = (
@@ -572,6 +582,12 @@ async def get_stats_summary(
             if is_time_based:
                 recent_sub = recent_sub.where(Match.played_at.isnot(None))
             recent_sub = _apply_match_filters(recent_sub, queue_type, from_date, to_date)
+            if player_name:
+                _PS2 = aliased(PlayerStat)
+                recent_sub = recent_sub.where(Match.id.in_(
+                    select(_PS2.match_id)
+                    .where(func.lower(_PS2.player_name) == player_name.lower())
+                ))
             recent_sub = recent_sub.order_by(Match.played_at.desc()).limit(last_n)
             stmt = stmt.where(Match.id.in_(recent_sub))
 

@@ -265,6 +265,23 @@ class TestStatsSummary:
         # 4 matches on 4 different days
         assert len(result["groups"]) == 4
 
+    async def test_player_name_filter(self):
+        from main import get_stats_summary
+
+        await _seed_analytics()
+        # BuddyA appears in all 4 seeded matches
+        all_result = await get_stats_summary()
+        filtered = await get_stats_summary(player_name="BuddyA")
+        assert filtered["groups"][0]["matches"] == all_result["groups"][0]["matches"]
+
+    async def test_player_name_filter_reduces_matches(self):
+        from main import get_stats_summary
+
+        await _seed_analytics()
+        # AllyX appears only in matches 1 and 4
+        filtered = await get_stats_summary(player_name="AllyX")
+        assert filtered["groups"][0]["matches"] == 2
+
 
 # ===========================================================================
 # get_hero_detail_stats
