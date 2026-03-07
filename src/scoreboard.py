@@ -80,6 +80,8 @@ _SYSTEM_FONTS = {
 _BUNDLED_FONTS = {
     "title": "big_noodle_titling_oblique",
     "title_regular": "big_noodle_titling",
+    "body": "segoeuib",
+    "symbol": "seguisym",
 }
 
 
