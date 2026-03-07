@@ -49,7 +49,7 @@ uv run alembic upgrade head
 ### 4. Start the server
 
 ```bash
-uv run python main.py
+uv run python src/main.py
 ```
 
 The server starts on `http://0.0.0.0:8000` using the Streamable HTTP transport.
@@ -62,7 +62,7 @@ The server starts on `http://0.0.0.0:8000` using the Streamable HTTP transport.
 | `--port` | `8000`    | Port to listen on    |
 
 ```bash
-uv run python main.py --host 127.0.0.1 --port 9000
+uv run python src/main.py --host 127.0.0.1 --port 9000
 ```
 
 ## Configuration
@@ -347,17 +347,18 @@ tests/
 
 ```
 .
-├── main.py                    # MCP server — all tools and helpers
-├── models.py                  # SQLAlchemy ORM models
-├── db.py                      # Database engine and session factory
-├── webhook.py                 # OpenClaw integration (agent-CLI and webhook modes)
-├── webhook_prompt.j2.example  # Example Jinja2 template for notification prompt
-├── OPENCLAW_SETUP.md          # OpenClaw integration setup guide
-├── alembic.ini                # Alembic configuration
+├── src/
+│   ├── main.py                # MCP server — all tools and helpers
+│   ├── models.py              # SQLAlchemy ORM models
+│   ├── db.py                  # Database engine and session factory
+│   └── webhook.py             # OpenClaw integration (agent-CLI and webhook modes)
+├── tests/                     # Test suite (157 tests, requires Docker)
 ├── alembic/
 │   ├── env.py                 # Async migration environment
 │   └── versions/              # Migration scripts
-├── tests/                     # Test suite (157 tests, requires Docker)
+├── alembic.ini                # Alembic configuration
+├── webhook_prompt.j2.example  # Example Jinja2 template for notification prompt
+├── OPENCLAW_SETUP.md          # OpenClaw integration setup guide
 ├── docker-compose.yml         # PostgreSQL service
 └── pyproject.toml             # Project metadata and dependencies
 ```
@@ -368,7 +369,7 @@ For production deployment on a VPS:
 
 1. Set `DATABASE_URL` to your production Postgres instance
 2. Run `uv run alembic upgrade head` to apply migrations
-3. Start with `uv run python main.py`
+3. Start with `uv run python src/main.py`
 4. Use systemd or similar to keep the process running
 5. Put a reverse proxy (nginx/caddy) in front for TLS
 
