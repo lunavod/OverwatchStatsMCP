@@ -168,6 +168,37 @@ class TestListMatchesFilters:
         )
         assert result["total"] == 2
 
+    async def test_filter_by_player_name(self):
+        from main import list_matches
+
+        await _seed_matches()
+        result = await list_matches(player_name="Ally1")
+        # All seeded matches use make_players() which includes "Ally1"
+        assert result["total"] > 0
+
+    async def test_filter_by_player_name_case_insensitive(self):
+        from main import list_matches
+
+        await _seed_matches()
+        lower = await list_matches(player_name="ally1")
+        upper = await list_matches(player_name="ALLY1")
+        assert lower["total"] == upper["total"]
+        assert lower["total"] > 0
+
+    async def test_filter_by_player_name_no_match(self):
+        from main import list_matches
+
+        await _seed_matches()
+        result = await list_matches(player_name="NonexistentPlayer99")
+        assert result["total"] == 0
+
+    async def test_filter_by_enemy_player_name(self):
+        from main import list_matches
+
+        await _seed_matches()
+        result = await list_matches(player_name="Enemy1")
+        assert result["total"] > 0
+
 
 # ---------------------------------------------------------------------------
 # Sorting

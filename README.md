@@ -203,7 +203,7 @@ Edit an existing match's metadata. Only provided fields are updated.
 
 List matches with filtering, sorting, and pagination.
 
-**Filters:** `map_name`, `mode`, `queue_type`, `result`, `from_date`, `to_date`, `hero_name`
+**Filters:** `map_name`, `mode`, `queue_type`, `result`, `from_date`, `to_date`, `hero_name`, `player_name`
 **Sorting:** `sort_by` (any of the 6 stat columns), `sort_order` (`asc`/`desc`)
 **Pagination:** `limit` (default 20, max 100), `offset`
 
@@ -336,7 +336,7 @@ tests/
 ├── conftest.py            # Testcontainers setup, DB override, per-test cleanup
 ├── factories.py           # Test data helpers (make_players, create_test_match)
 ├── test_match_crud.py     # Submit, get, edit, delete (39 tests)
-├── test_list_matches.py   # Filtering, sorting, pagination (16 tests)
+├── test_list_matches.py   # Filtering, sorting, pagination (21 tests)
 ├── test_analytics.py      # Stats, heroes, teammates, rankings, duration, history (40 tests)
 ├── test_player_notes.py   # Player notes CRUD and integration (11 tests)
 ├── test_screenshots.py    # Screenshot upload and serving
@@ -357,7 +357,7 @@ tests/
 ├── alembic/
 │   ├── env.py                 # Async migration environment
 │   └── versions/              # Migration scripts
-├── tests/                     # Test suite (151 tests, requires Docker)
+├── tests/                     # Test suite (155 tests, requires Docker)
 ├── docker-compose.yml         # PostgreSQL service
 └── pyproject.toml             # Project metadata and dependencies
 ```

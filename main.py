@@ -361,6 +361,7 @@ async def list_matches(
     from_date: str | None = None,
     to_date: str | None = None,
     hero_name: str | None = None,
+    player_name: str | None = None,
     sort_by: str | None = None,
     sort_order: str = "desc",
     limit: int = 20,
@@ -376,6 +377,7 @@ async def list_matches(
         from_date: ISO 8601 — only matches on or after this date
         to_date: ISO 8601 — only matches on or before this date
         hero_name: Filter to matches where self-player played this hero (case-insensitive)
+        player_name: Filter to matches containing this player (case-insensitive, any team)
         sort_by: Sort by a stat: eliminations, assists, deaths, damage, healing, mitigation
         sort_order: "asc" or "desc" (default "desc")
         limit: Max results (default 20, max 100)
@@ -408,6 +410,13 @@ async def list_matches(
                 .where(func.lower(HeroStat.hero_name) == hero_name.lower())
             )
             base = base.where(Match.id.in_(hero_sub))
+
+        if player_name:
+            player_sub = (
+                select(PlayerStat.match_id)
+                .where(func.lower(PlayerStat.player_name) == player_name.lower())
+            )
+            base = base.where(Match.id.in_(player_sub))
 
         # B1: sort_by stat
         _SORTABLE = {
