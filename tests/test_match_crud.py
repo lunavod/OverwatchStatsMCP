@@ -179,6 +179,8 @@ class TestGetMatch:
             "notes",
             "is_backfill",
             "source",
+            "scoreboard_url",
+            "hero_stats_url",
             "screenshots",
             "player_stats",
         }

@@ -168,6 +168,17 @@ class TestListMatchesFilters:
         )
         assert result["total"] == 2
 
+    async def test_filter_by_map_case_insensitive(self):
+        from main import list_matches
+
+        await _seed_matches()
+        upper = await list_matches(map_name="LIJIANG TOWER")
+        lower = await list_matches(map_name="lijiang tower")
+        mixed = await list_matches(map_name="Lijiang Tower")
+        assert upper["total"] == 2
+        assert lower["total"] == 2
+        assert mixed["total"] == 2
+
     async def test_filter_by_player_name(self):
         from main import list_matches
 

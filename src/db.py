@@ -4,7 +4,8 @@ from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
-load_dotenv()
+if not os.getenv("IS_TESTING"):
+    load_dotenv()
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",

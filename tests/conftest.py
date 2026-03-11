@@ -3,6 +3,10 @@
 Requires Docker to be running. Tests NEVER connect to any external / production database.
 """
 
+import os
+
+os.environ["IS_TESTING"] = "1"
+
 import shutil
 import tempfile
 from pathlib import Path
