@@ -435,7 +435,7 @@ async def list_matches(
         base = select(Match)
 
         if map_name:
-            base = base.where(Match.map_name == map_name)
+            base = base.where(func.lower(Match.map_name) == map_name.lower())
         if mode:
             base = base.where(Match.mode == mode.upper())
         if queue_type:
