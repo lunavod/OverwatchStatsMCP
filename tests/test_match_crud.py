@@ -31,9 +31,80 @@ class TestSubmitMatch:
         match_id = await create_test_match()
         match = await get_match(match_id)
         self_player = next(p for p in match["player_stats"] if p["is_self"])
-        assert self_player["hero_stat"] is not None
-        assert self_player["hero_stat"]["hero_name"] == "Ana"
-        assert len(self_player["hero_stat"]["values"]) == 2
+        assert len(self_player["heroes"]) == 1
+        assert self_player["heroes"][0]["hero_name"] == "Ana"
+        assert self_player["heroes"][0]["started_at"] == [0]
+        assert len(self_player["heroes"][0]["values"]) == 2
+
+    async def test_submit_multi_hero(self):
+        from main import get_match
+
+        players = make_players(
+            self_heroes=[
+                {"hero_name": "Reinhardt", "started_at": [0], "stats": [
+                    {"label": "Charge Kills", "value": "3", "is_featured": False},
+                ]},
+                {"hero_name": "Moira", "started_at": [180], "stats": [
+                    {"label": "Players Saved", "value": "17", "is_featured": True},
+                ]},
+            ],
+        )
+        match_id = await create_test_match(players=players)
+        match = await get_match(match_id)
+        self_player = next(p for p in match["player_stats"] if p["is_self"])
+        assert len(self_player["heroes"]) == 2
+        hero_names = [h["hero_name"] for h in self_player["heroes"]]
+        assert "Reinhardt" in hero_names
+        assert "Moira" in hero_names
+
+    async def test_hero_timeline_computed(self):
+        from main import get_match
+
+        players = make_players(
+            self_heroes=[
+                {"hero_name": "Ana", "started_at": [0, 300], "stats": []},
+                {"hero_name": "Moira", "started_at": [120], "stats": []},
+            ],
+        )
+        match_id = await create_test_match(duration="10:00", players=players)
+        match = await get_match(match_id)
+        self_player = next(p for p in match["player_stats"] if p["is_self"])
+        assert self_player["hero_timeline"] == [["Ana", 0], ["Moira", 120], ["Ana", 300]]
+        assert self_player["starting_hero"] == "Ana"
+        assert self_player["ending_hero"] == "Ana"
+
+    async def test_primary_hero_calculation(self):
+        from main import get_match
+
+        # Ana: 0-120 (120s) + 300-600 (300s) = 420s
+        # Moira: 120-300 (180s)
+        # Ana played most
+        players = make_players(
+            self_heroes=[
+                {"hero_name": "Ana", "started_at": [0, 300], "stats": []},
+                {"hero_name": "Moira", "started_at": [120], "stats": []},
+            ],
+        )
+        match_id = await create_test_match(duration="10:00", players=players)
+        match = await get_match(match_id)
+        self_player = next(p for p in match["player_stats"] if p["is_self"])
+        assert self_player["primary_hero"] == "Ana"
+
+    async def test_no_heroes_array_means_no_hero_stats(self):
+        """Player without heroes array gets empty heroes list."""
+        from main import submit_match, get_match
+
+        players = make_players()
+        # Remove heroes from self player
+        for p in players:
+            p.pop("heroes", None)
+        match_result = await submit_match(
+            map_name="Dorado", duration="10:00", mode="ESCORT",
+            queue_type="COMPETITIVE", result="VICTORY", players=players,
+        )
+        match = await get_match(match_result["match_id"])
+        self_player = next(p for p in match["player_stats"] if p["is_self"])
+        assert self_player["heroes"] == []
 
     async def test_uppercases_mode_and_queue(self):
         from main import get_match
@@ -146,6 +217,11 @@ class TestSubmitMatch:
         non_self = [p for p in match["player_stats"] if not p["is_self"]]
         for ps in non_self:
             assert ps["hero"] is None
+            assert ps["heroes"] == []
+            assert ps["hero_timeline"] == []
+            assert ps["primary_hero"] is None
+            assert ps["starting_hero"] is None
+            assert ps["ending_hero"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -348,25 +424,26 @@ class TestEditMatch:
         assert updated["eliminations"] == 99
         assert updated["deaths"] == 1
 
-    async def test_edit_player_hero_name(self):
+    async def test_edit_player_replace_heroes_single(self):
         from main import edit_match, get_match
 
         match_id = await create_test_match()
         match = await get_match(match_id)
         self_player = next(p for p in match["player_stats"] if p["is_self"])
-        assert self_player["hero_stat"]["hero_name"] == "Ana"
+        assert self_player["heroes"][0]["hero_name"] == "Ana"
         await edit_match(
             match_id,
             player_edits=[{
                 "player_stat_id": self_player["id"],
-                "hero_name": "Mercy",
+                "heroes": [{"hero_name": "Mercy", "started_at": [0], "stats": []}],
             }],
         )
         match = await get_match(match_id)
         updated = next(p for p in match["player_stats"] if p["id"] == self_player["id"])
-        assert updated["hero_stat"]["hero_name"] == "Mercy"
+        assert len(updated["heroes"]) == 1
+        assert updated["heroes"][0]["hero_name"] == "Mercy"
 
-    async def test_edit_player_clear_hero(self):
+    async def test_edit_player_clear_heroes(self):
         from main import edit_match, get_match
 
         match_id = await create_test_match()
@@ -376,33 +453,33 @@ class TestEditMatch:
             match_id,
             player_edits=[{
                 "player_stat_id": self_player["id"],
-                "hero_name": "",
+                "heroes": [],
             }],
         )
         match = await get_match(match_id)
         updated = next(p for p in match["player_stats"] if p["id"] == self_player["id"])
-        assert updated["hero_stat"] is None
+        assert updated["heroes"] == []
 
-    async def test_edit_player_add_hero(self):
+    async def test_edit_player_add_heroes_to_player_without(self):
         from main import edit_match, get_match
 
         match_id = await create_test_match()
         match = await get_match(match_id)
-        # Find a player without hero stat
         no_hero = next(
             p for p in match["player_stats"]
-            if not p["is_self"] and p["hero_stat"] is None
+            if not p["is_self"] and p["heroes"] == []
         )
         await edit_match(
             match_id,
             player_edits=[{
                 "player_stat_id": no_hero["id"],
-                "hero_name": "Genji",
+                "heroes": [{"hero_name": "Genji", "started_at": [0], "stats": []}],
             }],
         )
         match = await get_match(match_id)
         updated = next(p for p in match["player_stats"] if p["id"] == no_hero["id"])
-        assert updated["hero_stat"]["hero_name"] == "Genji"
+        assert len(updated["heroes"]) == 1
+        assert updated["heroes"][0]["hero_name"] == "Genji"
 
     async def test_edit_player_title(self):
         from main import edit_match, get_match
@@ -465,6 +542,32 @@ class TestEditMatch:
         match = await get_match(match_id)
         updated = next(p for p in match["player_stats"] if p["id"] == ps["id"])
         assert updated["hero"] is None
+
+    async def test_edit_player_replace_heroes(self):
+        from main import edit_match, get_match
+
+        match_id = await create_test_match()
+        match = await get_match(match_id)
+        self_player = next(p for p in match["player_stats"] if p["is_self"])
+        await edit_match(
+            match_id,
+            player_edits=[{
+                "player_stat_id": self_player["id"],
+                "heroes": [
+                    {"hero_name": "Mercy", "started_at": [0], "stats": []},
+                    {"hero_name": "Lucio", "started_at": [200], "stats": [
+                        {"label": "Sound Barriers", "value": "4", "is_featured": True},
+                    ]},
+                ],
+            }],
+        )
+        match = await get_match(match_id)
+        updated = next(p for p in match["player_stats"] if p["id"] == self_player["id"])
+        assert len(updated["heroes"]) == 2
+        hero_names = {h["hero_name"] for h in updated["heroes"]}
+        assert hero_names == {"Mercy", "Lucio"}
+        lucio = next(h for h in updated["heroes"] if h["hero_name"] == "Lucio")
+        assert len(lucio["values"]) == 1
 
     async def test_edit_player_unknown_id_ignored(self):
         from main import edit_match

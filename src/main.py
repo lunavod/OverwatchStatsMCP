@@ -197,7 +197,7 @@ async def submit_match(
             hero_name (optional string, hero played — case-insensitive),
             eliminations, assists, deaths, damage, healing, mitigation (all int|null),
             is_self (bool, default false),
-            hero (optional dict with hero_name and stats list of {label, value, is_featured} — for detailed self-player hero stats)
+            heroes (optional array of hero dicts, each with hero_name, started_at [int array of seconds from match start], and stats [{label, value, is_featured}])
         played_at: Optional ISO 8601 timestamp
         notes: Optional free-text notes about the match
         is_backfill: Whether this match was backfilled from historical data (default false)
@@ -222,10 +222,12 @@ async def submit_match(
             session.add(match)
 
             for p in players:
-                # Resolve hero name: explicit hero_name field takes priority,
-                # falls back to hero dict's hero_name if present
-                hero_dict = p.get("hero")
-                hero_name_raw = p.get("hero_name") or (hero_dict["hero_name"] if hero_dict else None)
+                heroes_list = p.get("heroes")
+
+                # Resolve hero name for denormalized column
+                hero_name_raw = p.get("hero_name")
+                if not hero_name_raw and heroes_list:
+                    hero_name_raw = heroes_list[0]["hero_name"]
 
                 ps = PlayerStat(
                     match=match,
@@ -244,15 +246,15 @@ async def submit_match(
                 )
                 session.add(ps)
 
-                hero = hero_dict
-                if hero:
+                for hero_entry in heroes_list or []:
                     hs = HeroStat(
                         player_stat=ps,
-                        hero_name=hero["hero_name"],
+                        hero_name=hero_entry["hero_name"],
+                        started_at=hero_entry.get("started_at", []),
                     )
                     session.add(hs)
 
-                    for sv in hero.get("stats", []):
+                    for sv in hero_entry.get("stats", []):
                         session.add(
                             HeroStatValue(
                                 hero_stat=hs,
@@ -319,6 +321,66 @@ async def submit_match(
     return match_result
 
 
+def _parse_duration_seconds(duration: str) -> int:
+    """Parse MM:SS duration string to total seconds."""
+    try:
+        parts = duration.split(":")
+        return int(parts[0]) * 60 + int(parts[1])
+    except (ValueError, IndexError):
+        return 0
+
+
+def _hero_timeline(hero_stats_list):
+    """Build sorted [[hero_name, seconds], ...] from all started_at entries."""
+    pairs = []
+    for hs in hero_stats_list:
+        for t in (hs.started_at or []):
+            pairs.append([hs.hero_name, t])
+    pairs.sort(key=lambda x: x[1])
+    return pairs
+
+
+def _primary_hero(hero_stats_list, match_duration_seconds):
+    """Determine which hero was played longest."""
+    if not hero_stats_list:
+        return None
+    if len(hero_stats_list) == 1:
+        return hero_stats_list[0].hero_name
+
+    timeline = _hero_timeline(hero_stats_list)
+    if not timeline:
+        return hero_stats_list[0].hero_name
+
+    time_per_hero = {}
+    for i, (hero, start) in enumerate(timeline):
+        end = timeline[i + 1][1] if i + 1 < len(timeline) else match_duration_seconds
+        time_per_hero[hero] = time_per_hero.get(hero, 0) + (end - start)
+
+    return max(time_per_hero, key=time_per_hero.get)
+
+
+def _build_player_hero_fields(ps, match_duration_seconds):
+    """Build computed hero fields for a player stat."""
+    timeline = _hero_timeline(ps.hero_stats)
+    return {
+        "heroes": [
+            {
+                "hero_name": hs.hero_name,
+                "started_at": hs.started_at or [],
+                "values": [
+                    {"label": v.label, "value": v.value, "is_featured": v.is_featured}
+                    for v in hs.values
+                ],
+            }
+            for hs in ps.hero_stats
+        ],
+        "hero_timeline": timeline,
+        "primary_hero": _primary_hero(ps.hero_stats, match_duration_seconds),
+        "starting_hero": timeline[0][0] if timeline else None,
+        "ending_hero": timeline[-1][0] if timeline else None,
+    }
+
+
 @mcp.tool()
 async def get_match(match_id: str) -> dict:
     """Get full details of a match by ID, including all player stats and hero stats.
@@ -332,7 +394,7 @@ async def get_match(match_id: str) -> dict:
             .where(Match.id == uuid.UUID(match_id))
             .options(
                 joinedload(Match.player_stats)
-                .joinedload(PlayerStat.hero_stat)
+                .joinedload(PlayerStat.hero_stats)
                 .joinedload(HeroStat.values),
                 joinedload(Match.screenshots),
             )
@@ -345,6 +407,8 @@ async def get_match(match_id: str) -> dict:
 
         player_names = [ps.player_name for ps in match.player_stats]
         notes_map = await _fetch_player_notes(session, player_names)
+
+    match_duration_secs = _parse_duration_seconds(match.duration)
 
     return {
         "id": str(match.id),
@@ -377,21 +441,7 @@ async def get_match(match_id: str) -> dict:
                 "healing": ps.healing,
                 "mitigation": ps.mitigation,
                 "is_self": ps.is_self,
-                "hero_stat": (
-                    {
-                        "hero_name": ps.hero_stat.hero_name,
-                        "values": [
-                            {
-                                "label": v.label,
-                                "value": v.value,
-                                "is_featured": v.is_featured,
-                            }
-                            for v in ps.hero_stat.values
-                        ],
-                    }
-                    if ps.hero_stat
-                    else None
-                ),
+                **_build_player_hero_fields(ps, match_duration_secs),
             }
             for ps in match.player_stats
         ],
@@ -1248,14 +1298,16 @@ async def edit_match(
             team (ALLY/ENEMY), role (TANK/DPS/SUPPORT),
             eliminations, assists, deaths, damage, healing, mitigation (int|null),
             is_self (bool),
-            hero_name (string to set/change detailed hero stat, or empty string to clear)
+            heroes (array to replace all hero stats for this player, each with hero_name, started_at, stats)
     """
     async with db.async_session() as session:
         async with session.begin():
             load_options = [joinedload(Match.screenshots)]
             if player_edits:
                 load_options.append(
-                    joinedload(Match.player_stats).joinedload(PlayerStat.hero_stat)
+                    joinedload(Match.player_stats)
+                    .joinedload(PlayerStat.hero_stats)
+                    .joinedload(HeroStat.values)
                 )
             stmt = (
                 select(Match)
@@ -1328,14 +1380,24 @@ async def edit_match(
                         ps.mitigation = pe["mitigation"]
                     if "is_self" in pe:
                         ps.is_self = pe["is_self"]
-                    if "hero_name" in pe:
-                        if pe["hero_name"]:
-                            if ps.hero_stat:
-                                ps.hero_stat.hero_name = pe["hero_name"]
-                            else:
-                                session.add(HeroStat(player_stat=ps, hero_name=pe["hero_name"]))
-                        elif ps.hero_stat:
-                            await session.delete(ps.hero_stat)
+                    if "heroes" in pe:
+                        for existing_hs in list(ps.hero_stats):
+                            await session.delete(existing_hs)
+                        await session.flush()
+                        for hero_entry in pe["heroes"]:
+                            hs = HeroStat(
+                                player_stat=ps,
+                                hero_name=hero_entry["hero_name"],
+                                started_at=hero_entry.get("started_at", []),
+                            )
+                            session.add(hs)
+                            for sv in hero_entry.get("stats", []):
+                                session.add(HeroStatValue(
+                                    hero_stat=hs,
+                                    label=sv["label"],
+                                    value=str(sv["value"]),
+                                    is_featured=sv.get("is_featured", False),
+                                ))
 
     return {"updated": True}
 

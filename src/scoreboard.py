@@ -240,8 +240,12 @@ def render_scoreboard(match_data: dict, output_path: str = "scoreboard.png") -> 
 
     self_player = next((p for p in players if p.get("is_self")), None)
     hero_stats = None
-    if self_player and self_player.get("hero_stat"):
-        hero_stats = self_player["hero_stat"]
+    if self_player:
+        # Find the primary hero's stats (first hero with non-empty values)
+        for h in self_player.get("heroes", []):
+            if h.get("values"):
+                hero_stats = h
+                break
 
     # Dynamic width: measure text, expand name column if needed
     name_col_w = _measure_name_col(players)

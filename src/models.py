@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, Uuid, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from db import Base
@@ -55,8 +55,8 @@ class PlayerStat(Base):
     hero: Mapped[str | None] = mapped_column(String, nullable=True)
 
     match: Mapped["Match"] = relationship(back_populates="player_stats")
-    hero_stat: Mapped["HeroStat | None"] = relationship(
-        back_populates="player_stat", cascade="all, delete-orphan", uselist=False
+    hero_stats: Mapped[list["HeroStat"]] = relationship(
+        back_populates="player_stat", cascade="all, delete-orphan"
     )
 
 
@@ -65,11 +65,12 @@ class HeroStat(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     player_stat_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("player_stats.id", ondelete="CASCADE"), unique=True
+        Uuid, ForeignKey("player_stats.id", ondelete="CASCADE")
     )
     hero_name: Mapped[str] = mapped_column(String)
+    started_at: Mapped[list | None] = mapped_column(JSON, nullable=True, default=list)
 
-    player_stat: Mapped["PlayerStat"] = relationship(back_populates="hero_stat")
+    player_stat: Mapped["PlayerStat"] = relationship(back_populates="hero_stats")
     values: Mapped[list["HeroStatValue"]] = relationship(
         back_populates="hero_stat", cascade="all, delete-orphan"
     )

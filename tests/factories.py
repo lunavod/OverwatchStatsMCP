@@ -5,21 +5,30 @@ def make_players(
     self_name="TestPlayer",
     self_role="SUPPORT",
     self_hero=None,
+    self_heroes=None,
     self_stats=None,
     ally_names=None,
 ):
     """Build a 10-player roster with sensible defaults.
 
     Returns a list of player dicts suitable for submit_match().
+    self_heroes takes priority over self_hero. Both accept hero dicts with
+    hero_name, started_at, and stats keys.
     """
-    if self_hero is None:
-        self_hero = {
-            "hero_name": "Ana",
-            "stats": [
-                {"label": "Nano Boost Assists", "value": "8", "is_featured": True},
-                {"label": "Enemies Slept", "value": "12", "is_featured": False},
-            ],
-        }
+    if self_heroes is None:
+        if self_hero is None:
+            self_hero = {
+                "hero_name": "Ana",
+                "started_at": [0],
+                "stats": [
+                    {"label": "Nano Boost Assists", "value": "8", "is_featured": True},
+                    {"label": "Enemies Slept", "value": "12", "is_featured": False},
+                ],
+            }
+        # Ensure started_at exists for backward compat
+        if "started_at" not in self_hero:
+            self_hero["started_at"] = []
+        self_heroes = [self_hero]
 
     base_self = {
         "eliminations": 15,
@@ -39,7 +48,7 @@ def make_players(
             "player_name": self_name,
             **base_self,
             "is_self": True,
-            "hero": self_hero,
+            "heroes": self_heroes,
         }
     ]
 
