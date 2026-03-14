@@ -1,6 +1,5 @@
 """Optional Telegram bot integration — sends scoreboard images after match creation."""
 
-import asyncio
 import logging
 import os
 from pathlib import Path

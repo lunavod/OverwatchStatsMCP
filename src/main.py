@@ -1062,8 +1062,8 @@ async def get_match_player_history(
         info["player_note"] = notes_map.get(info["player_name"])
 
     # Build result: group history rows by normalized_name
-    history_by_name = {}
-    appearances_by_name = {}
+    history_by_name: dict[str, list[dict]] = {}
+    appearances_by_name: dict[str, int] = {}
     for row in rows_q2:
         nn = row.normalized_name
         appearances_by_name[nn] = row.total_appearances

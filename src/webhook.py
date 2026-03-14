@@ -100,6 +100,7 @@ async def _fire_webhook_http(match_data: dict) -> None:
     }
 
     try:
+        assert WEBHOOK_URL is not None
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(WEBHOOK_URL, json=payload, headers=headers)
             resp.raise_for_status()

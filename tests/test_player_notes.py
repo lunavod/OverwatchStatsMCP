@@ -86,7 +86,7 @@ class TestPlayerNotesInPlayerHistory:
         from main import set_player_note, get_match_player_history
 
         # Create two matches with overlapping players so history exists
-        match_id1 = await create_test_match(played_at="2026-01-15T20:00:00")
+        await create_test_match(played_at="2026-01-15T20:00:00")
         match_id2 = await create_test_match(played_at="2026-01-16T20:00:00")
         await set_player_note("Ally1", "Duo partner")
         result = await get_match_player_history(match_id2)

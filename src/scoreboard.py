@@ -85,7 +85,7 @@ _BUNDLED_FONTS = {
 }
 
 
-def _load_font(name: str, size: int) -> ImageFont.FreeTypeFont:
+def _load_font(name: str, size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     bundled_name = _BUNDLED_FONTS.get(name)
     if bundled_name:
         for ext in ("ttf", "otf"):
@@ -190,7 +190,7 @@ def _measure_name_col(players: list[dict]) -> int:
     dummy = Image.new("RGB", (1, 1))
     draw = ImageDraw.Draw(dummy)
 
-    max_text_w = 0
+    max_text_w: float = 0
     for p in players:
         name = p.get("player_name", "???")
         hero = p.get("hero") or ""
@@ -212,7 +212,7 @@ def _measure_name_col(players: list[dict]) -> int:
             hero_w = hero_bbox[2] - hero_bbox[0]
             max_text_w = max(max_text_w, hero_w)
 
-    required = NAME_LEFT_OFFSET + max_text_w + NAME_RIGHT_PAD
+    required = int(NAME_LEFT_OFFSET + max_text_w + NAME_RIGHT_PAD)
     return max(DEFAULT_NAME_COL_W, required)
 
 
@@ -317,6 +317,7 @@ def render_scoreboard(match_data: dict, output_path: str = "scoreboard.png") -> 
 
     # --- Hero stats image (separate) ---
     if hero_stats and hero_stats.get("values"):
+        assert self_player is not None
         hero_path = out_path.with_name(out_path.stem + "_hero" + out_path.suffix)
         hero_img = _render_hero_stats_image(self_player, hero_stats, width=width)
         hero_img.save(hero_path, "PNG")
@@ -385,7 +386,7 @@ def _render_hero_stats_image(player: dict, hero_stats: dict, width: int = DEFAUL
 
 
 def _draw_team_block(
-    draw: ImageDraw.Draw,
+    draw: ImageDraw.ImageDraw,
     y: int,
     label: str,
     players: list[dict],
@@ -430,7 +431,7 @@ def _draw_team_block(
     return y
 
 
-def _draw_stat_header_row(draw: ImageDraw.Draw, y: int, width: int = DEFAULT_WIDTH, name_col_w: int = DEFAULT_NAME_COL_W):
+def _draw_stat_header_row(draw: ImageDraw.ImageDraw, y: int, width: int = DEFAULT_WIDTH, name_col_w: int = DEFAULT_NAME_COL_W):
     stat_area_start = name_col_w
     col_w = STAT_AREA_W // len(STAT_LABELS)
 
@@ -443,7 +444,7 @@ def _draw_stat_header_row(draw: ImageDraw.Draw, y: int, width: int = DEFAULT_WID
 
 
 def _draw_player_row(
-    draw: ImageDraw.Draw,
+    draw: ImageDraw.ImageDraw,
     y: int,
     player: dict,
     bg_color: tuple,
