@@ -4,7 +4,8 @@ An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server for t
 
 ## Features
 
-- **Match tracking** — Record complete 10-player lobbies with per-player stats, hero-specific breakdowns, notes, and screenshots
+- **Match tracking** — Record complete 10-player lobbies with per-player stats, multi-hero timelines, notes, screenshots, and rank range metadata
+- **Scoreboard generation** — Automatically generates scoreboard PNG images on match submission, with optional Telegram delivery
 - **Flexible querying** — Filter and sort matches by map, mode, queue type, hero, date range, and stats
 - **Match editing** — Update match metadata, player data (names, titles, stats, heroes), and manage screenshots after submission
 - **Player notes** — Attach persistent notes to player usernames (globally, not per-match), surfaced in match details, teammate stats, and player history
@@ -137,6 +138,10 @@ Record a completed match with all player stats.
 | `is_backfill` | bool       | No       | Whether this match was backfilled from historical data (default false) |
 | `source`      | string     | No       | Source identifier (e.g. "ocr", "manual"; default empty)  |
 | `screenshots` | string[]   | No       | List of screenshot URLs (image download links)           |
+| `screenshot_uploads` | array | No    | Base64 image uploads, each with `data` (base64 string) and optional `filename` |
+| `rank_min`    | string     | No       | Minimum rank in the lobby (e.g. "Gold 3")                |
+| `rank_max`    | string     | No       | Maximum rank in the lobby (e.g. "Diamond 1")             |
+| `is_wide_match` | bool    | No       | Whether this is a wide skill-range match                 |
 
 **Player object:**
 
@@ -146,7 +151,7 @@ Record a completed match with all player stats.
 | `role`         | string  | Yes      | `TANK`, `DPS`, or `SUPPORT`                          |
 | `player_name`  | string  | Yes      | Player's display name                                |
 | `title`        | string  | No       | Player's title (e.g. competitive rank title)         |
-| `hero_name`    | string  | No       | Hero played (auto-populated from `hero` dict if not set) |
+| `hero_name`    | string  | No       | Hero played (auto-populated from `heroes` array if not set) |
 | `eliminations` | int     | No       | Elimination count                                    |
 | `assists`      | int     | No       | Assist count                                         |
 | `deaths`       | int     | No       | Death count                                          |
@@ -154,11 +159,11 @@ Record a completed match with all player stats.
 | `healing`      | int     | No       | Healing done                                         |
 | `mitigation`   | int     | No       | Damage mitigated                                     |
 | `is_self`      | bool    | No       | Whether this is the recording player (default false) |
-| `hero`         | object  | No       | Hero data with `hero_name` and `stats` array         |
+| `heroes`       | array   | No       | Array of hero dicts, each with `hero_name`, `started_at` (int array of seconds from match start), and `stats` (array of `{label, value, is_featured}`) |
 
 ### `get_match`
 
-Retrieve full details for a match by UUID, including all player stats, hero stat values, notes, backfill flag, and screenshot URLs.
+Retrieve full details for a match by UUID, including all player stats, hero stat values, multi-hero timelines (with computed `primary_hero`, `starting_hero`, `ending_hero`), rank range, notes, backfill flag, and screenshot URLs.
 
 ### `edit_match`
 
@@ -179,8 +184,12 @@ Edit an existing match's metadata. Only provided fields are updated.
 | `is_backfill`          | bool     | No       | New backfill flag                              |
 | `source`               | string   | No       | New source identifier                          |
 | `screenshots_to_add`   | string[] | No       | Screenshot URLs to attach                      |
+| `screenshot_uploads`   | array    | No       | Base64 image uploads (same format as `submit_match`) |
 | `screenshots_to_remove`| string[] | No       | Screenshot URLs to remove                      |
 | `player_edits`         | array    | No       | List of player stat edits (see below)          |
+| `rank_min`             | string   | No       | New minimum rank (empty string to clear)       |
+| `rank_max`             | string   | No       | New maximum rank (empty string to clear)       |
+| `is_wide_match`        | bool     | No       | New wide match flag                            |
 
 **Player edit object:**
 
@@ -199,7 +208,7 @@ Edit an existing match's metadata. Only provided fields are updated.
 | `healing`        | int    | No       | New healing done                                     |
 | `mitigation`     | int    | No       | New damage mitigated                                 |
 | `is_self`        | bool   | No       | New self flag                                        |
-| `hero_name`      | string | No       | Set/change hero name (empty string to clear hero)    |
+| `heroes`         | array  | No       | Replace all hero stats (same format as `submit_match` player `heroes`) |
 
 ### `list_matches`
 
@@ -295,9 +304,9 @@ matches
 player_notes (standalone, keyed by username)
 ```
 
-- **matches** — Map, mode, queue type, result, duration, notes, is_backfill, timestamps
+- **matches** — Map, mode, queue type, result, duration, notes, is_backfill, rank_min, rank_max, is_wide_match, scoreboard URLs, timestamps
 - **player_stats** — Per-player per-match: team, role, name, title, hero, 6 stat columns, is_self flag
-- **hero_stats** — Links a player_stat to a hero name (1:1)
+- **hero_stats** — Links a player_stat to a hero name (1:N for multi-hero support), with `started_at` timestamps
 - **hero_stat_values** — Arbitrary key-value hero stats (label/value/is_featured)
 - **screenshots** — Screenshot URLs attached to a match
 - **player_notes** — Global notes attached to player usernames
@@ -337,12 +346,12 @@ uv run pytest -k "test_filter"             # keyword match
 tests/
 ├── conftest.py            # Testcontainers setup, DB override, per-test cleanup
 ├── factories.py           # Test data helpers (make_players, create_test_match)
-├── test_match_crud.py     # Submit, get, edit, delete (44 tests)
-├── test_list_matches.py   # Filtering, sorting, pagination (21 tests)
+├── test_match_crud.py     # Submit, get, edit, delete (55 tests)
+├── test_list_matches.py   # Filtering, sorting, pagination (23 tests)
 ├── test_analytics.py      # Stats, heroes, teammates, rankings, duration, history (42 tests)
 ├── test_player_notes.py   # Player notes CRUD and integration (11 tests)
-├── test_screenshots.py    # Screenshot upload and serving
-└── test_webhook.py        # Webhook and agent-CLI notification (33 tests)
+├── test_screenshots.py    # Screenshot upload and serving (11 tests)
+└── test_webhook.py        # Webhook and agent-CLI notification (34 tests)
 ```
 
 ## Project Structure
@@ -353,8 +362,10 @@ tests/
 │   ├── main.py                # MCP server — all tools and helpers
 │   ├── models.py              # SQLAlchemy ORM models
 │   ├── db.py                  # Database engine and session factory
+│   ├── scoreboard.py          # Scoreboard PNG image generation
+│   ├── telegram.py            # Telegram bot integration for scoreboard delivery
 │   └── webhook.py             # OpenClaw integration (agent-CLI and webhook modes)
-├── tests/                     # Test suite (162 tests, requires Docker)
+├── tests/                     # Test suite (175 tests, requires Docker)
 ├── alembic/
 │   ├── env.py                 # Async migration environment
 │   └── versions/              # Migration scripts

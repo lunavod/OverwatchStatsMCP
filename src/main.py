@@ -182,6 +182,9 @@ async def submit_match(
     source: str = "",
     screenshots: list[str] | None = None,
     screenshot_uploads: list[dict] | None = None,
+    rank_min: str | None = None,
+    rank_max: str | None = None,
+    is_wide_match: bool | None = None,
 ) -> dict:
     """Submit a completed Overwatch match with all player stats.
 
@@ -205,6 +208,9 @@ async def submit_match(
         screenshots: Optional list of screenshot URLs (image download links)
         screenshot_uploads: Optional list of base64 image uploads, each with keys:
             data (base64-encoded image bytes), filename (optional, used for extension detection)
+        rank_min: Optional minimum rank in the lobby (e.g. "Gold 3")
+        rank_max: Optional maximum rank in the lobby (e.g. "Diamond 1")
+        is_wide_match: Optional flag indicating a wide skill-range match
     """
     async with db.async_session() as session:
         async with session.begin():
@@ -218,6 +224,9 @@ async def submit_match(
                 notes=notes,
                 is_backfill=is_backfill,
                 source=source,
+                rank_min=rank_min,
+                rank_max=rank_max,
+                is_wide_match=is_wide_match,
             )
             session.add(match)
 
@@ -424,6 +433,9 @@ async def get_match(match_id: str) -> dict:
         "source": match.source,
         "scoreboard_url": match.scoreboard_url,
         "hero_stats_url": match.hero_stats_url,
+        "rank_min": match.rank_min,
+        "rank_max": match.rank_max,
+        "is_wide_match": match.is_wide_match,
         "screenshots": [s.url for s in match.screenshots],
         "player_stats": [
             {
@@ -576,6 +588,9 @@ async def list_matches(
                 "is_backfill": m.is_backfill,
                 "scoreboard_url": m.scoreboard_url,
                 "hero_stats_url": m.hero_stats_url,
+                "rank_min": m.rank_min,
+                "rank_max": m.rank_max,
+                "is_wide_match": m.is_wide_match,
                 "sort_value": int(sv) if sv is not None else None,
             }
             matches_out.append(d)
@@ -595,6 +610,9 @@ async def list_matches(
                     "is_backfill": m.is_backfill,
                     "scoreboard_url": m.scoreboard_url,
                     "hero_stats_url": m.hero_stats_url,
+                    "rank_min": m.rank_min,
+                    "rank_max": m.rank_max,
+                    "is_wide_match": m.is_wide_match,
                 }
             )
 
@@ -1273,6 +1291,9 @@ async def edit_match(
     screenshot_uploads: list[dict] | None = None,
     screenshots_to_remove: list[str] | None = None,
     player_edits: list[dict] | None = None,
+    rank_min: str | None = None,
+    rank_max: str | None = None,
+    is_wide_match: bool | None = None,
 ) -> dict:
     """Edit an existing match's metadata. Only provided fields are updated.
 
@@ -1287,6 +1308,9 @@ async def edit_match(
         notes: New notes text (pass empty string to clear)
         is_backfill: New backfill flag
         source: New source identifier
+        rank_min: New minimum rank (pass empty string to clear)
+        rank_max: New maximum rank (pass empty string to clear)
+        is_wide_match: New wide match flag
         screenshots_to_add: List of screenshot URLs to attach
         screenshot_uploads: List of base64 image uploads, each with keys:
             data (base64-encoded image bytes), filename (optional, used for extension detection)
@@ -1336,6 +1360,12 @@ async def edit_match(
                 match.is_backfill = is_backfill
             if source is not None:
                 match.source = source
+            if rank_min is not None:
+                match.rank_min = rank_min or None
+            if rank_max is not None:
+                match.rank_max = rank_max or None
+            if is_wide_match is not None:
+                match.is_wide_match = is_wide_match
 
             if screenshots_to_remove:
                 remove_set = set(screenshots_to_remove)

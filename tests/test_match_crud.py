@@ -223,6 +223,35 @@ class TestSubmitMatch:
             assert ps["starting_hero"] is None
             assert ps["ending_hero"] is None
 
+    async def test_with_rank_fields(self):
+        from main import get_match
+
+        match_id = await create_test_match(
+            rank_min="Gold 3", rank_max="Diamond 1", is_wide_match=True
+        )
+        match = await get_match(match_id)
+        assert match["rank_min"] == "Gold 3"
+        assert match["rank_max"] == "Diamond 1"
+        assert match["is_wide_match"] is True
+
+    async def test_rank_fields_default_to_none(self):
+        from main import get_match
+
+        match_id = await create_test_match()
+        match = await get_match(match_id)
+        assert match["rank_min"] is None
+        assert match["rank_max"] is None
+        assert match["is_wide_match"] is None
+
+    async def test_partial_rank_fields(self):
+        from main import get_match
+
+        match_id = await create_test_match(rank_min="Silver 2")
+        match = await get_match(match_id)
+        assert match["rank_min"] == "Silver 2"
+        assert match["rank_max"] is None
+        assert match["is_wide_match"] is None
+
 
 # ---------------------------------------------------------------------------
 # get_match
@@ -257,6 +286,9 @@ class TestGetMatch:
             "source",
             "scoreboard_url",
             "hero_stats_url",
+            "rank_min",
+            "rank_max",
+            "is_wide_match",
             "screenshots",
             "player_stats",
         }
@@ -581,6 +613,42 @@ class TestEditMatch:
             }],
         )
         assert result == {"updated": True}
+
+    async def test_edit_rank_fields(self):
+        from main import edit_match, get_match
+
+        match_id = await create_test_match()
+        await edit_match(
+            match_id, rank_min="Gold 3", rank_max="Diamond 1", is_wide_match=True
+        )
+        match = await get_match(match_id)
+        assert match["rank_min"] == "Gold 3"
+        assert match["rank_max"] == "Diamond 1"
+        assert match["is_wide_match"] is True
+
+    async def test_clear_rank_fields(self):
+        from main import edit_match, get_match
+
+        match_id = await create_test_match(
+            rank_min="Gold 3", rank_max="Diamond 1", is_wide_match=True
+        )
+        await edit_match(match_id, rank_min="", rank_max="")
+        match = await get_match(match_id)
+        assert match["rank_min"] is None
+        assert match["rank_max"] is None
+        assert match["is_wide_match"] is True
+
+    async def test_edit_rank_preserves_other_fields(self):
+        from main import edit_match, get_match
+
+        match_id = await create_test_match(
+            map_name="Dorado", notes="Good game"
+        )
+        await edit_match(match_id, rank_min="Platinum 5")
+        match = await get_match(match_id)
+        assert match["rank_min"] == "Platinum 5"
+        assert match["map_name"] == "Dorado"
+        assert match["notes"] == "Good game"
 
 
 # ---------------------------------------------------------------------------

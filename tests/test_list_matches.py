@@ -95,6 +95,20 @@ class TestListMatchesBasic:
             assert "notes" in m
             assert "is_backfill" in m
 
+    async def test_includes_rank_fields(self):
+        from main import list_matches
+
+        await create_test_match(
+            rank_min="Gold 3", rank_max="Diamond 1", is_wide_match=True
+        )
+        await create_test_match()  # no rank fields
+        result = await list_matches()
+        assert result["total"] == 2
+        for m in result["matches"]:
+            assert "rank_min" in m
+            assert "rank_max" in m
+            assert "is_wide_match" in m
+
 
 # ---------------------------------------------------------------------------
 # Filtering

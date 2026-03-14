@@ -22,6 +22,9 @@ class Match(Base):
     source: Mapped[str] = mapped_column(String, default="", server_default="")
     scoreboard_url: Mapped[str | None] = mapped_column(String, nullable=True)
     hero_stats_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    rank_min: Mapped[str | None] = mapped_column(String, nullable=True)
+    rank_max: Mapped[str | None] = mapped_column(String, nullable=True)
+    is_wide_match: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
