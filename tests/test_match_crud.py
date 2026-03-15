@@ -197,7 +197,7 @@ class TestSubmitMatch:
         ally1 = next(p for p in match["player_stats"] if p["player_name"] == "Ally1")
         assert ally1["hero"] == "Reinhardt"
         enemy1 = next(p for p in match["player_stats"] if p["player_name"] == "Enemy1")
-        assert enemy1["hero"] == "genji"
+        assert enemy1["hero"] == "Genji"  # normalized from lowercase input
 
     async def test_hero_auto_populated_from_hero_dict(self):
         from main import get_match
@@ -251,6 +251,106 @@ class TestSubmitMatch:
         assert match["rank_min"] == "Silver 2"
         assert match["rank_max"] is None
         assert match["is_wide_match"] is None
+
+    async def test_normalizes_map_name(self):
+        from main import get_match
+
+        match_id = await create_test_match(map_name="lijiang tower")
+        match = await get_match(match_id)
+        assert match["map_name"] == "Lijiang Tower"
+
+    async def test_strips_map_parenthetical(self):
+        from main import get_match
+
+        match_id = await create_test_match(map_name="Lijiang Tower (Lunar New Year)")
+        match = await get_match(match_id)
+        assert match["map_name"] == "Lijiang Tower"
+
+    async def test_fuzzy_matches_map_name(self):
+        from main import get_match
+
+        match_id = await create_test_match(map_name="Lijang Tower")  # typo
+        match = await get_match(match_id)
+        assert match["map_name"] == "Lijiang Tower"
+
+    async def test_rejects_unknown_map(self):
+        from main import submit_match
+
+        result = await submit_match(
+            map_name="Totally Fake Map",
+            duration="10:00",
+            mode="CONTROL",
+            queue_type="COMPETITIVE",
+            result="VICTORY",
+            players=make_players(),
+        )
+        assert "error" in result
+        assert "map name" in result["error"].lower()
+
+    async def test_normalizes_hero_names(self):
+        from main import get_match
+
+        players = make_players(
+            self_heroes=[
+                {"hero_name": "ana", "started_at": [0], "stats": []},
+            ],
+        )
+        players[1]["hero_name"] = "reinhardt"
+        match_id = await create_test_match(players=players)
+        match = await get_match(match_id)
+        self_player = next(p for p in match["player_stats"] if p["is_self"])
+        assert self_player["heroes"][0]["hero_name"] == "Ana"
+        assert self_player["hero"] == "Ana"
+        ally1 = next(p for p in match["player_stats"] if p["player_name"] == "Ally1")
+        assert ally1["hero"] == "Reinhardt"
+
+    async def test_fuzzy_matches_hero_name(self):
+        from main import get_match
+
+        players = make_players(
+            self_heroes=[
+                {"hero_name": "Brigite", "started_at": [0], "stats": []},  # typo
+            ],
+        )
+        match_id = await create_test_match(players=players)
+        match = await get_match(match_id)
+        self_player = next(p for p in match["player_stats"] if p["is_self"])
+        assert self_player["heroes"][0]["hero_name"] == "Brigitte"
+
+    async def test_rejects_garbage_hero_name(self):
+        from main import submit_match
+
+        players = make_players()
+        players[1]["hero_name"] = "Juno Does This Help? \\ Ukie (Anran"
+        result = await submit_match(
+            map_name="Lijiang Tower",
+            duration="10:00",
+            mode="CONTROL",
+            queue_type="COMPETITIVE",
+            result="VICTORY",
+            players=players,
+        )
+        assert "error" in result
+        assert "hero name" in result["error"].lower()
+
+    async def test_rejects_garbage_hero_in_heroes_list(self):
+        from main import submit_match
+
+        players = make_players(
+            self_heroes=[
+                {"hero_name": "Not A Real Hero At All", "started_at": [0], "stats": []},
+            ],
+        )
+        result = await submit_match(
+            map_name="Lijiang Tower",
+            duration="10:00",
+            mode="CONTROL",
+            queue_type="COMPETITIVE",
+            result="VICTORY",
+            players=players,
+        )
+        assert "error" in result
+        assert "hero name" in result["error"].lower()
 
 
 # ---------------------------------------------------------------------------
@@ -649,6 +749,66 @@ class TestEditMatch:
         assert match["rank_min"] == "Platinum 5"
         assert match["map_name"] == "Dorado"
         assert match["notes"] == "Good game"
+
+    async def test_edit_normalizes_map_name(self):
+        from main import edit_match, get_match
+
+        match_id = await create_test_match()
+        await edit_match(match_id, map_name="dorado")
+        match = await get_match(match_id)
+        assert match["map_name"] == "Dorado"
+
+    async def test_edit_rejects_unknown_map(self):
+        from main import edit_match
+
+        match_id = await create_test_match()
+        result = await edit_match(match_id, map_name="Totally Fake Map")
+        assert "error" in result
+        assert "map name" in result["error"].lower()
+
+    async def test_edit_normalizes_hero_in_player_edits(self):
+        from main import edit_match, get_match
+
+        match_id = await create_test_match()
+        match = await get_match(match_id)
+        ps = match["player_stats"][1]
+        await edit_match(
+            match_id,
+            player_edits=[{"player_stat_id": ps["id"], "hero": "mercy"}],
+        )
+        match = await get_match(match_id)
+        updated = next(p for p in match["player_stats"] if p["id"] == ps["id"])
+        assert updated["hero"] == "Mercy"
+
+    async def test_edit_rejects_unknown_hero_in_player_edits(self):
+        from main import edit_match, get_match
+
+        match_id = await create_test_match()
+        match = await get_match(match_id)
+        ps = match["player_stats"][0]
+        result = await edit_match(
+            match_id,
+            player_edits=[{"player_stat_id": ps["id"], "hero": "Not A Real Hero"}],
+        )
+        assert "error" in result
+        assert "hero name" in result["error"].lower()
+
+    async def test_edit_normalizes_hero_in_heroes_replacement(self):
+        from main import edit_match, get_match
+
+        match_id = await create_test_match()
+        match = await get_match(match_id)
+        self_player = next(p for p in match["player_stats"] if p["is_self"])
+        await edit_match(
+            match_id,
+            player_edits=[{
+                "player_stat_id": self_player["id"],
+                "heroes": [{"hero_name": "lucio", "started_at": [0], "stats": []}],
+            }],
+        )
+        match = await get_match(match_id)
+        updated = next(p for p in match["player_stats"] if p["id"] == self_player["id"])
+        assert updated["heroes"][0]["hero_name"] == "Lucio"
 
 
 # ---------------------------------------------------------------------------

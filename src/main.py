@@ -1,7 +1,9 @@
 import asyncio
 import base64
+import difflib
 import logging
 import os
+import re
 import uuid
 from datetime import datetime
 from decimal import Decimal
@@ -28,6 +30,52 @@ mcp = FastMCP("OverwatchStats", json_response=True)
 mcp._custom_starlette_routes.append(
     Mount("/uploads", app=StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 )
+
+# ---------------------------------------------------------------------------
+# Name validation lists (loaded once at import)
+# ---------------------------------------------------------------------------
+
+_BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+def _load_names(filename: str) -> list[str]:
+    return [line.strip() for line in (_BASE_DIR / filename).read_text().splitlines() if line.strip()]
+
+
+VALID_HEROES = _load_names("heroes.txt")
+VALID_MAPS = _load_names("maps.txt")
+
+_HERO_LOOKUP: dict[str, str] = {h.lower(): h for h in VALID_HEROES}
+_MAP_LOOKUP: dict[str, str] = {m.lower(): m for m in VALID_MAPS}
+
+
+def normalize_hero_name(raw: str) -> str | None:
+    """Fuzzy-match a hero name to the canonical list. Returns canonical name or None."""
+    cleaned = raw.strip()
+    if not cleaned:
+        return None
+    lower = cleaned.lower()
+    if lower in _HERO_LOOKUP:
+        return _HERO_LOOKUP[lower]
+    matches = difflib.get_close_matches(lower, _HERO_LOOKUP.keys(), n=1, cutoff=0.6)
+    if matches:
+        return _HERO_LOOKUP[matches[0]]
+    return None
+
+
+def normalize_map_name(raw: str) -> str | None:
+    """Strip parenthetical suffix and fuzzy-match to canonical map name. Returns canonical name or None."""
+    cleaned = re.sub(r"\s*\(.*\)\s*$", "", raw).strip()
+    if not cleaned:
+        return None
+    lower = cleaned.lower()
+    if lower in _MAP_LOOKUP:
+        return _MAP_LOOKUP[lower]
+    matches = difflib.get_close_matches(lower, _MAP_LOOKUP.keys(), n=1, cutoff=0.6)
+    if matches:
+        return _MAP_LOOKUP[matches[0]]
+    return None
+
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -212,6 +260,33 @@ async def submit_match(
         rank_max: Optional maximum rank in the lobby (e.g. "Diamond 1")
         is_wide_match: Optional flag indicating a wide skill-range match
     """
+    # --- Validate & normalize map name ---
+    normalized_map = normalize_map_name(map_name)
+    if normalized_map is None:
+        return {"error": f"Unknown map name: {map_name!r}"}
+    map_name = normalized_map
+
+    # --- Validate & normalize hero names ---
+    errors: list[str] = []
+    for p in players:
+        hero_name_raw = p.get("hero_name")
+        if hero_name_raw:
+            matched = normalize_hero_name(hero_name_raw)
+            if matched is None:
+                errors.append(hero_name_raw)
+            else:
+                p["hero_name"] = matched
+        for hero_entry in p.get("heroes") or []:
+            h_raw = hero_entry.get("hero_name")
+            if h_raw:
+                matched = normalize_hero_name(h_raw)
+                if matched is None:
+                    errors.append(h_raw)
+                else:
+                    hero_entry["hero_name"] = matched
+    if errors:
+        return {"error": f"Unknown hero name(s): {', '.join(repr(e) for e in errors)}"}
+
     async with db.async_session() as session:
         async with session.begin():
             match = Match(
@@ -1324,6 +1399,35 @@ async def edit_match(
             is_self (bool),
             heroes (array to replace all hero stats for this player, each with hero_name, started_at, stats)
     """
+    # --- Validate & normalize map name ---
+    if map_name is not None:
+        normalized_map = normalize_map_name(map_name)
+        if normalized_map is None:
+            return {"error": f"Unknown map name: {map_name!r}"}
+        map_name = normalized_map
+
+    # --- Validate & normalize hero names in player edits ---
+    if player_edits:
+        errors: list[str] = []
+        for pe in player_edits:
+            hero_raw = pe.get("hero")
+            if hero_raw:
+                matched = normalize_hero_name(hero_raw)
+                if matched is None:
+                    errors.append(hero_raw)
+                else:
+                    pe["hero"] = matched
+            for hero_entry in pe.get("heroes") or []:
+                h_raw = hero_entry.get("hero_name")
+                if h_raw:
+                    matched = normalize_hero_name(h_raw)
+                    if matched is None:
+                        errors.append(h_raw)
+                    else:
+                        hero_entry["hero_name"] = matched
+        if errors:
+            return {"error": f"Unknown hero name(s): {', '.join(repr(e) for e in errors)}"}
+
     async with db.async_session() as session:
         async with session.begin():
             load_options = [joinedload(Match.screenshots)]

@@ -127,7 +127,7 @@ Record a completed match with all player stats.
 
 | Name          | Type       | Required | Description                                              |
 |---------------|------------|----------|----------------------------------------------------------|
-| `map_name`    | string     | Yes      | Map name (e.g. "Lijiang Tower")                          |
+| `map_name`    | string     | Yes      | Map name — fuzzy-matched to `maps.txt`; parenthetical suffixes like `(Lunar New Year)` are stripped |
 | `duration`    | string     | Yes      | Match duration as `MM:SS`                                |
 | `mode`        | string     | Yes      | `PUSH`, `CONTROL`, `ESCORT`, `HYBRID`, `CLASH`, `FLASHPOINT` |
 | `queue_type`  | string     | Yes      | `COMPETITIVE` or `QUICKPLAY`                             |
@@ -151,7 +151,7 @@ Record a completed match with all player stats.
 | `role`         | string  | Yes      | `TANK`, `DPS`, or `SUPPORT`                          |
 | `player_name`  | string  | Yes      | Player's display name                                |
 | `title`        | string  | No       | Player's title (e.g. competitive rank title)         |
-| `hero_name`    | string  | No       | Hero played (auto-populated from `heroes` array if not set) |
+| `hero_name`    | string  | No       | Hero played — fuzzy-matched to `heroes.txt` (auto-populated from `heroes` array if not set) |
 | `eliminations` | int     | No       | Elimination count                                    |
 | `assists`      | int     | No       | Assist count                                         |
 | `deaths`       | int     | No       | Death count                                          |
@@ -160,6 +160,8 @@ Record a completed match with all player stats.
 | `mitigation`   | int     | No       | Damage mitigated                                     |
 | `is_self`      | bool    | No       | Whether this is the recording player (default false) |
 | `heroes`       | array   | No       | Array of hero dicts, each with `hero_name`, `started_at` (int array of seconds from match start), and `stats` (array of `{label, value, is_featured}`) |
+
+**Name validation:** Map and hero names are fuzzy-matched against canonical lists (`maps.txt` and `heroes.txt`). Close typos from OCR are auto-corrected; completely unrecognizable names return an error and the match is rejected. Map names have parenthetical suffixes (e.g. `(Lunar New Year)`) stripped before matching. The same validation applies to `edit_match`.
 
 ### `get_match`
 
@@ -346,7 +348,7 @@ uv run pytest -k "test_filter"             # keyword match
 tests/
 ├── conftest.py            # Testcontainers setup, DB override, per-test cleanup
 ├── factories.py           # Test data helpers (make_players, create_test_match)
-├── test_match_crud.py     # Submit, get, edit, delete (55 tests)
+├── test_match_crud.py     # Submit, get, edit, delete (68 tests)
 ├── test_list_matches.py   # Filtering, sorting, pagination (23 tests)
 ├── test_analytics.py      # Stats, heroes, teammates, rankings, duration, history (42 tests)
 ├── test_player_notes.py   # Player notes CRUD and integration (11 tests)
@@ -365,10 +367,13 @@ tests/
 │   ├── scoreboard.py          # Scoreboard PNG image generation
 │   ├── telegram.py            # Telegram bot integration for scoreboard delivery
 │   └── webhook.py             # OpenClaw integration (agent-CLI and webhook modes)
-├── tests/                     # Test suite (175 tests, requires Docker)
+├── tests/                     # Test suite (188 tests, requires Docker)
 ├── alembic/
 │   ├── env.py                 # Async migration environment
 │   └── versions/              # Migration scripts
+├── heroes.txt                 # Canonical hero name list (used for fuzzy matching)
+├── maps.txt                   # Canonical map name list (used for fuzzy matching)
+├── migrate_normalize_names.py # Data migration: normalize existing hero/map names
 ├── alembic.ini                # Alembic configuration
 ├── webhook_prompt.j2.example  # Example Jinja2 template for notification prompt
 ├── OPENCLAW_SETUP.md          # OpenClaw integration setup guide

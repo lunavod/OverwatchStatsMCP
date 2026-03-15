@@ -1,0 +1,50 @@
+Ana
+Anran
+Ashe
+Baptiste
+Bastion
+Brigitte
+Cassidy
+D.Va
+Domina
+Doomfist
+Echo
+Emre
+Freja
+Genji
+Hanzo
+Hazard
+Illari
+Jetpack Cat
+Junker Queen
+Juno
+Junkrat
+Kiriko
+Lifeweaver
+Lucio
+Mauga
+Mei
+Mercy
+Mizuki
+Moira
+Orisa
+Pharah
+Ramattra
+Reaper
+Reinhardt
+Roadhog
+Sigma
+Sojourn
+Soldier: 76
+Sombra
+Symmetra
+Torbjorn
+Tracer
+Vendetta
+Venture
+Widowmaker
+Winston
+Wrecking Ball
+Wuyang
+Zarya
+Zenyatta
