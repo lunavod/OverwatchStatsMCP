@@ -117,25 +117,25 @@ async def run(*, apply: bool) -> None:
             return
 
         # ---- Apply updates ----
-        async with session.begin():
-            for old, new in updated_maps:
+        for old, new in updated_maps:
+            await session.execute(
+                text("UPDATE matches SET map_name = :new WHERE map_name = :old"),
+                {"old": old, "new": new},
+            )
+
+        for table, old, new in updated_heroes:
+            if table == "player_stats.hero":
                 await session.execute(
-                    text("UPDATE matches SET map_name = :new WHERE map_name = :old"),
+                    text("UPDATE player_stats SET hero = :new WHERE hero = :old"),
+                    {"old": old, "new": new},
+                )
+            elif table == "hero_stats.hero_name":
+                await session.execute(
+                    text("UPDATE hero_stats SET hero_name = :new WHERE hero_name = :old"),
                     {"old": old, "new": new},
                 )
 
-            for table, old, new in updated_heroes:
-                if table == "player_stats.hero":
-                    await session.execute(
-                        text("UPDATE player_stats SET hero = :new WHERE hero = :old"),
-                        {"old": old, "new": new},
-                    )
-                elif table == "hero_stats.hero_name":
-                    await session.execute(
-                        text("UPDATE hero_stats SET hero_name = :new WHERE hero_name = :old"),
-                        {"old": old, "new": new},
-                    )
-
+        await session.commit()
         print()
         print(f"APPLIED {total_changes} update(s) successfully.")
 

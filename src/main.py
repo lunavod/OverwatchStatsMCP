@@ -1658,4 +1658,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
     mcp.settings.host = args.host
     mcp.settings.port = args.port
+
+    # Allow external hostname through DNS rebinding protection
+    external_host = os.getenv("MCP_EXTERNAL_HOST")
+    if external_host:
+        mcp.settings.transport_security.allowed_hosts.append(external_host)
+        mcp.settings.transport_security.allowed_origins.append(f"https://{external_host}")
+        mcp.settings.transport_security.allowed_origins.append(f"http://{external_host}")
+
     mcp.run(transport="streamable-http")
