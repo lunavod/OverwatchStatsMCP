@@ -54,6 +54,7 @@ class PlayerStat(Base):
     healing: Mapped[int | None] = mapped_column(Integer)
     mitigation: Mapped[int | None] = mapped_column(Integer)
     is_self: Mapped[bool] = mapped_column(Boolean, default=False)
+    joined_at: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     title: Mapped[str | None] = mapped_column(String, nullable=True)
     hero: Mapped[str | None] = mapped_column(String, nullable=True)
 

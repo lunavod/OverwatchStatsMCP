@@ -223,6 +223,26 @@ class TestSubmitMatch:
             assert ps["starting_hero"] is None
             assert ps["ending_hero"] is None
 
+    async def test_joined_at_defaults_to_zero(self):
+        from main import get_match
+
+        match_id = await create_test_match()
+        match = await get_match(match_id)
+        for ps in match["player_stats"]:
+            assert ps["joined_at"] == 0
+
+    async def test_joined_at_set_on_submit(self):
+        from main import get_match
+
+        players = make_players()
+        players[1]["joined_at"] = 300  # joined 5 minutes in
+        match_id = await create_test_match(players=players)
+        match = await get_match(match_id)
+        ally1 = next(p for p in match["player_stats"] if p["player_name"] == "Ally1")
+        assert ally1["joined_at"] == 300
+        self_player = next(p for p in match["player_stats"] if p["is_self"])
+        assert self_player["joined_at"] == 0
+
     async def test_with_rank_fields(self):
         from main import get_match
 
@@ -700,6 +720,21 @@ class TestEditMatch:
         assert hero_names == {"Mercy", "Lucio"}
         lucio = next(h for h in updated["heroes"] if h["hero_name"] == "Lucio")
         assert len(lucio["values"]) == 1
+
+    async def test_edit_player_joined_at(self):
+        from main import edit_match, get_match
+
+        match_id = await create_test_match()
+        match = await get_match(match_id)
+        ps = match["player_stats"][1]
+        assert ps["joined_at"] == 0
+        await edit_match(
+            match_id,
+            player_edits=[{"player_stat_id": ps["id"], "joined_at": 450}],
+        )
+        match = await get_match(match_id)
+        updated = next(p for p in match["player_stats"] if p["id"] == ps["id"])
+        assert updated["joined_at"] == 450
 
     async def test_edit_player_unknown_id_ignored(self):
         from main import edit_match

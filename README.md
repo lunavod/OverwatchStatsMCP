@@ -159,6 +159,7 @@ Record a completed match with all player stats.
 | `healing`      | int     | No       | Healing done                                         |
 | `mitigation`   | int     | No       | Damage mitigated                                     |
 | `is_self`      | bool    | No       | Whether this is the recording player (default false) |
+| `joined_at`    | int     | No       | Seconds from match start when this player joined (default 0) |
 | `heroes`       | array   | No       | Array of hero dicts, each with `hero_name`, `started_at` (int array of seconds from match start), and `stats` (array of `{label, value, is_featured}`) |
 
 **Name validation:** Map and hero names are fuzzy-matched against canonical lists (`maps.txt` and `heroes.txt`). Close typos from OCR are auto-corrected; completely unrecognizable names return an error and the match is rejected. Map names have parenthetical suffixes (e.g. `(Lunar New Year)`) stripped before matching. The same validation applies to `edit_match`.
@@ -210,6 +211,7 @@ Edit an existing match's metadata. Only provided fields are updated.
 | `healing`        | int    | No       | New healing done                                     |
 | `mitigation`     | int    | No       | New damage mitigated                                 |
 | `is_self`        | bool   | No       | New self flag                                        |
+| `joined_at`      | int    | No       | Seconds from match start when player joined          |
 | `heroes`         | array  | No       | Replace all hero stats (same format as `submit_match` player `heroes`) |
 
 ### `list_matches`
@@ -307,7 +309,7 @@ player_notes (standalone, keyed by username)
 ```
 
 - **matches** — Map, mode, queue type, result, duration, notes, is_backfill, rank_min, rank_max, is_wide_match, scoreboard URLs, timestamps
-- **player_stats** — Per-player per-match: team, role, name, title, hero, 6 stat columns, is_self flag
+- **player_stats** — Per-player per-match: team, role, name, title, hero, 6 stat columns, is_self flag, joined_at (seconds from match start)
 - **hero_stats** — Links a player_stat to a hero name (1:N for multi-hero support), with `started_at` timestamps
 - **hero_stat_values** — Arbitrary key-value hero stats (label/value/is_featured)
 - **screenshots** — Screenshot URLs attached to a match
@@ -348,7 +350,7 @@ uv run pytest -k "test_filter"             # keyword match
 tests/
 ├── conftest.py            # Testcontainers setup, DB override, per-test cleanup
 ├── factories.py           # Test data helpers (make_players, create_test_match)
-├── test_match_crud.py     # Submit, get, edit, delete (68 tests)
+├── test_match_crud.py     # Submit, get, edit, delete (71 tests)
 ├── test_list_matches.py   # Filtering, sorting, pagination (23 tests)
 ├── test_analytics.py      # Stats, heroes, teammates, rankings, duration, history (42 tests)
 ├── test_player_notes.py   # Player notes CRUD and integration (11 tests)
@@ -367,7 +369,7 @@ tests/
 │   ├── scoreboard.py          # Scoreboard PNG image generation
 │   ├── telegram.py            # Telegram bot integration for scoreboard delivery
 │   └── webhook.py             # OpenClaw integration (agent-CLI and webhook modes)
-├── tests/                     # Test suite (188 tests, requires Docker)
+├── tests/                     # Test suite (191 tests, requires Docker)
 ├── alembic/
 │   ├── env.py                 # Async migration environment
 │   └── versions/              # Migration scripts

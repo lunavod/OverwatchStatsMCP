@@ -248,6 +248,7 @@ async def submit_match(
             hero_name (optional string, hero played — case-insensitive),
             eliminations, assists, deaths, damage, healing, mitigation (all int|null),
             is_self (bool, default false),
+            joined_at (int, seconds from match start when this player joined, default 0),
             heroes (optional array of hero dicts, each with hero_name, started_at [int array of seconds from match start], and stats [{label, value, is_featured}])
         played_at: Optional ISO 8601 timestamp
         notes: Optional free-text notes about the match
@@ -327,6 +328,7 @@ async def submit_match(
                     healing=p.get("healing"),
                     mitigation=p.get("mitigation"),
                     is_self=p.get("is_self", False),
+                    joined_at=p.get("joined_at", 0),
                 )
                 session.add(ps)
 
@@ -528,6 +530,7 @@ async def get_match(match_id: str) -> dict:
                 "healing": ps.healing,
                 "mitigation": ps.mitigation,
                 "is_self": ps.is_self,
+                "joined_at": ps.joined_at,
                 **_build_player_hero_fields(ps, match_duration_secs),
             }
             for ps in match.player_stats
@@ -1396,7 +1399,7 @@ async def edit_match(
             hero (string or empty string to clear — hero played),
             team (ALLY/ENEMY), role (TANK/DPS/SUPPORT),
             eliminations, assists, deaths, damage, healing, mitigation (int|null),
-            is_self (bool),
+            is_self (bool), joined_at (int),
             heroes (array to replace all hero stats for this player, each with hero_name, started_at, stats)
     """
     # --- Validate & normalize map name ---
@@ -1514,6 +1517,8 @@ async def edit_match(
                         ps.mitigation = pe["mitigation"]
                     if "is_self" in pe:
                         ps.is_self = pe["is_self"]
+                    if "joined_at" in pe:
+                        ps.joined_at = pe["joined_at"]
                     if "heroes" in pe:
                         for existing_hs in list(ps.hero_stats):
                             await session.delete(existing_hs)
