@@ -251,7 +251,8 @@ async def submit_match(
             is_self (bool, default false),
             is_teammate (bool, default false — marks a known teammate/group member),
             joined_at (int, seconds from match start when this player joined, default 0),
-            heroes (optional array of hero dicts, each with hero_name, started_at [int array of seconds from match start], and stats [{label, value, is_featured}])
+            heroes (optional array of hero dicts, each with hero_name, started_at [int array of seconds from match start], and stats [{label, value, is_featured}]),
+            swap_snapshots (optional array of cumulative stat snapshots at each hero swap, each with time (int seconds), eliminations, assists, deaths, damage, healing, mitigation — all int)
         played_at: Optional ISO 8601 timestamp
         notes: Optional free-text notes about the match
         is_backfill: Whether this match was backfilled from historical data (default false)
@@ -348,6 +349,7 @@ async def submit_match(
                     is_self=p.get("is_self", False),
                     is_teammate=p.get("is_teammate", False),
                     joined_at=p.get("joined_at", 0),
+                    swap_snapshots=p.get("swap_snapshots"),
                 )
                 session.add(ps)
 
@@ -464,10 +466,45 @@ def _primary_hero(hero_stats_list, match_duration_seconds):
     return max(time_per_hero, key=time_per_hero.get)
 
 
+def _compute_hero_segments(timeline, swap_snapshots, match_duration_seconds):
+    """Compute per-segment stat deltas from timeline + cumulative swap snapshots.
+
+    Each segment covers one contiguous hero play period. Stats are the difference
+    between the cumulative snapshot at the segment end and the one at the segment start.
+    """
+    if not timeline or not swap_snapshots:
+        return []
+
+    _STAT_KEYS = ("eliminations", "assists", "deaths", "damage", "healing", "mitigation")
+
+    # Index snapshots by time for O(1) lookup
+    snap_by_time = {s["time"]: s for s in swap_snapshots}
+
+    segments = []
+    for i, (hero, start) in enumerate(timeline):
+        end = timeline[i + 1][1] if i + 1 < len(timeline) else match_duration_seconds
+        snap_start = snap_by_time.get(start)
+        snap_end = snap_by_time.get(end)
+        if snap_start is None or snap_end is None:
+            continue
+        duration_secs = end - start
+        mins, secs = divmod(duration_secs, 60)
+        seg = {
+            "hero": hero,
+            "from": start,
+            "to": end,
+            "duration": f"{mins}:{secs:02d}",
+        }
+        for k in _STAT_KEYS:
+            seg[k] = (snap_end.get(k) or 0) - (snap_start.get(k) or 0)
+        segments.append(seg)
+    return segments
+
+
 def _build_player_hero_fields(ps, match_duration_seconds):
     """Build computed hero fields for a player stat."""
     timeline = _hero_timeline(ps.hero_stats)
-    return {
+    result = {
         "heroes": [
             {
                 "hero_name": hs.hero_name,
@@ -484,6 +521,12 @@ def _build_player_hero_fields(ps, match_duration_seconds):
         "starting_hero": timeline[0][0] if timeline else None,
         "ending_hero": timeline[-1][0] if timeline else None,
     }
+    if ps.swap_snapshots:
+        result["swap_snapshots"] = ps.swap_snapshots
+        result["hero_segments"] = _compute_hero_segments(
+            timeline, ps.swap_snapshots, match_duration_seconds
+        )
+    return result
 
 
 @mcp.tool()
@@ -1425,6 +1468,7 @@ async def edit_match(
             team (ALLY/ENEMY), role (TANK/DPS/SUPPORT),
             eliminations, assists, deaths, damage, healing, mitigation (int|null),
             is_self (bool), is_teammate (bool), joined_at (int),
+            swap_snapshots (array of cumulative stat snapshots, or empty array to clear),
             heroes (array to replace all hero stats for this player, each with hero_name, started_at, stats)
     """
     # --- Validate & normalize map name ---
@@ -1565,6 +1609,8 @@ async def edit_match(
                         ps.is_teammate = pe["is_teammate"]
                     if "joined_at" in pe:
                         ps.joined_at = pe["joined_at"]
+                    if "swap_snapshots" in pe:
+                        ps.swap_snapshots = pe["swap_snapshots"] or None
                     if "heroes" in pe:
                         for existing_hs in list(ps.hero_stats):
                             await session.delete(existing_hs)

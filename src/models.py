@@ -59,6 +59,7 @@ class PlayerStat(Base):
     joined_at: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     title: Mapped[str | None] = mapped_column(String, nullable=True)
     hero: Mapped[str | None] = mapped_column(String, nullable=True)
+    swap_snapshots: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
     match: Mapped["Match"] = relationship(back_populates="player_stats")
     hero_stats: Mapped[list["HeroStat"]] = relationship(
