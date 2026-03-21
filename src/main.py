@@ -233,6 +233,7 @@ async def submit_match(
     rank_min: str | None = None,
     rank_max: str | None = None,
     is_wide_match: bool | None = None,
+    banned_heroes: list[str] | None = None,
 ) -> dict:
     """Submit a completed Overwatch match with all player stats.
 
@@ -248,6 +249,7 @@ async def submit_match(
             hero_name (optional string, hero played — case-insensitive),
             eliminations, assists, deaths, damage, healing, mitigation (all int|null),
             is_self (bool, default false),
+            is_teammate (bool, default false — marks a known teammate/group member),
             joined_at (int, seconds from match start when this player joined, default 0),
             heroes (optional array of hero dicts, each with hero_name, started_at [int array of seconds from match start], and stats [{label, value, is_featured}])
         played_at: Optional ISO 8601 timestamp
@@ -260,6 +262,7 @@ async def submit_match(
         rank_min: Optional minimum rank in the lobby (e.g. "Gold 3")
         rank_max: Optional maximum rank in the lobby (e.g. "Diamond 1")
         is_wide_match: Optional flag indicating a wide skill-range match
+        banned_heroes: Optional list of banned hero names (case-insensitive, fuzzy-matched)
     """
     # --- Validate & normalize map name ---
     normalized_map = normalize_map_name(map_name)
@@ -288,6 +291,20 @@ async def submit_match(
     if errors:
         return {"error": f"Unknown hero name(s): {', '.join(repr(e) for e in errors)}"}
 
+    # --- Validate & normalize banned heroes ---
+    normalized_banned: list[str] | None = None
+    if banned_heroes:
+        normalized_banned = []
+        ban_errors: list[str] = []
+        for raw in banned_heroes:
+            matched = normalize_hero_name(raw)
+            if matched is None:
+                ban_errors.append(raw)
+            else:
+                normalized_banned.append(matched)
+        if ban_errors:
+            return {"error": f"Unknown banned hero name(s): {', '.join(repr(e) for e in ban_errors)}"}
+
     async with db.async_session() as session:
         async with session.begin():
             match = Match(
@@ -303,6 +320,7 @@ async def submit_match(
                 rank_min=rank_min,
                 rank_max=rank_max,
                 is_wide_match=is_wide_match,
+                banned_heroes=normalized_banned,
             )
             session.add(match)
 
@@ -328,6 +346,7 @@ async def submit_match(
                     healing=p.get("healing"),
                     mitigation=p.get("mitigation"),
                     is_self=p.get("is_self", False),
+                    is_teammate=p.get("is_teammate", False),
                     joined_at=p.get("joined_at", 0),
                 )
                 session.add(ps)
@@ -513,6 +532,7 @@ async def get_match(match_id: str) -> dict:
         "rank_min": match.rank_min,
         "rank_max": match.rank_max,
         "is_wide_match": match.is_wide_match,
+        "banned_heroes": match.banned_heroes,
         "screenshots": [s.url for s in match.screenshots],
         "player_stats": [
             {
@@ -530,6 +550,7 @@ async def get_match(match_id: str) -> dict:
                 "healing": ps.healing,
                 "mitigation": ps.mitigation,
                 "is_self": ps.is_self,
+                "is_teammate": ps.is_teammate,
                 "joined_at": ps.joined_at,
                 **_build_player_hero_fields(ps, match_duration_secs),
             }
@@ -669,6 +690,7 @@ async def list_matches(
                 "rank_min": m.rank_min,
                 "rank_max": m.rank_max,
                 "is_wide_match": m.is_wide_match,
+                "banned_heroes": m.banned_heroes,
                 "sort_value": int(sv) if sv is not None else None,
             }
             matches_out.append(d)
@@ -691,6 +713,7 @@ async def list_matches(
                     "rank_min": m.rank_min,
                     "rank_max": m.rank_max,
                     "is_wide_match": m.is_wide_match,
+                    "banned_heroes": m.banned_heroes,
                 }
             )
 
@@ -1372,6 +1395,7 @@ async def edit_match(
     rank_min: str | None = None,
     rank_max: str | None = None,
     is_wide_match: bool | None = None,
+    banned_heroes: list[str] | None = None,
 ) -> dict:
     """Edit an existing match's metadata. Only provided fields are updated.
 
@@ -1389,6 +1413,7 @@ async def edit_match(
         rank_min: New minimum rank (pass empty string to clear)
         rank_max: New maximum rank (pass empty string to clear)
         is_wide_match: New wide match flag
+        banned_heroes: New list of banned hero names (pass empty list to clear)
         screenshots_to_add: List of screenshot URLs to attach
         screenshot_uploads: List of base64 image uploads, each with keys:
             data (base64-encoded image bytes), filename (optional, used for extension detection)
@@ -1399,7 +1424,7 @@ async def edit_match(
             hero (string or empty string to clear — hero played),
             team (ALLY/ENEMY), role (TANK/DPS/SUPPORT),
             eliminations, assists, deaths, damage, healing, mitigation (int|null),
-            is_self (bool), joined_at (int),
+            is_self (bool), is_teammate (bool), joined_at (int),
             heroes (array to replace all hero stats for this player, each with hero_name, started_at, stats)
     """
     # --- Validate & normalize map name ---
@@ -1430,6 +1455,23 @@ async def edit_match(
                         hero_entry["hero_name"] = matched
         if errors:
             return {"error": f"Unknown hero name(s): {', '.join(repr(e) for e in errors)}"}
+
+    # --- Validate & normalize banned heroes ---
+    normalized_banned: list[str] | None = None
+    if banned_heroes is not None:
+        if banned_heroes:
+            normalized_banned = []
+            ban_errors: list[str] = []
+            for raw in banned_heroes:
+                matched = normalize_hero_name(raw)
+                if matched is None:
+                    ban_errors.append(raw)
+                else:
+                    normalized_banned.append(matched)
+            if ban_errors:
+                return {"error": f"Unknown banned hero name(s): {', '.join(repr(e) for e in ban_errors)}"}
+        else:
+            normalized_banned = []
 
     async with db.async_session() as session:
         async with session.begin():
@@ -1473,6 +1515,8 @@ async def edit_match(
                 match.rank_max = rank_max or None
             if is_wide_match is not None:
                 match.is_wide_match = is_wide_match
+            if banned_heroes is not None:
+                match.banned_heroes = normalized_banned or None
 
             if screenshots_to_remove:
                 remove_set = set(screenshots_to_remove)
@@ -1517,6 +1561,8 @@ async def edit_match(
                         ps.mitigation = pe["mitigation"]
                     if "is_self" in pe:
                         ps.is_self = pe["is_self"]
+                    if "is_teammate" in pe:
+                        ps.is_teammate = pe["is_teammate"]
                     if "joined_at" in pe:
                         ps.joined_at = pe["joined_at"]
                     if "heroes" in pe:

@@ -409,6 +409,7 @@ class TestGetMatch:
             "rank_min",
             "rank_max",
             "is_wide_match",
+            "banned_heroes",
             "screenshots",
             "player_stats",
         }

@@ -122,6 +122,12 @@ FONT_HERO_SECTION_TITLE = _load_font("title", 36)
 # Drawing helpers
 # ---------------------------------------------------------------------------
 
+def _strip_battletag(name: str) -> str:
+    """Strip battletag discriminator from a username (e.g. 'asdf#123' -> 'asdf')."""
+    idx = name.find("#")
+    return name[:idx] if idx != -1 else name
+
+
 def _format_stat(value: int | None) -> str:
     if value is None:
         return "-"
@@ -192,7 +198,7 @@ def _measure_name_col(players: list[dict]) -> int:
 
     max_text_w: float = 0
     for p in players:
-        name = p.get("player_name", "???")
+        name = _strip_battletag(p.get("player_name", "???"))
         hero = p.get("hero") or ""
         title = p.get("title") or ""
 
@@ -479,7 +485,7 @@ def _draw_player_row(
     )
 
     # --- Player name + hero (vertically centered as a pair) ---
-    name = player.get("player_name", "???")
+    name = _strip_battletag(player.get("player_name", "???"))
     hero = player.get("hero") or ""
     title = player.get("title") or ""
 

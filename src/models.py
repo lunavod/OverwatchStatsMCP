@@ -25,6 +25,7 @@ class Match(Base):
     rank_min: Mapped[str | None] = mapped_column(String, nullable=True)
     rank_max: Mapped[str | None] = mapped_column(String, nullable=True)
     is_wide_match: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    banned_heroes: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -54,6 +55,7 @@ class PlayerStat(Base):
     healing: Mapped[int | None] = mapped_column(Integer)
     mitigation: Mapped[int | None] = mapped_column(Integer)
     is_self: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_teammate: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     joined_at: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     title: Mapped[str | None] = mapped_column(String, nullable=True)
     hero: Mapped[str | None] = mapped_column(String, nullable=True)
