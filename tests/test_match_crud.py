@@ -5,6 +5,33 @@ from tests.factories import create_test_match, make_players
 
 
 # ---------------------------------------------------------------------------
+# scoreboard helpers
+# ---------------------------------------------------------------------------
+
+
+class TestStripBattletag:
+    def test_strips_discriminator(self):
+        from scoreboard import _strip_battletag
+
+        assert _strip_battletag("player#12345") == "player"
+
+    def test_no_discriminator(self):
+        from scoreboard import _strip_battletag
+
+        assert _strip_battletag("player") == "player"
+
+    def test_empty_string(self):
+        from scoreboard import _strip_battletag
+
+        assert _strip_battletag("") == ""
+
+    def test_multiple_hashes(self):
+        from scoreboard import _strip_battletag
+
+        assert _strip_battletag("play#er#123") == "play"
+
+
+# ---------------------------------------------------------------------------
 # submit_match
 # ---------------------------------------------------------------------------
 
@@ -242,6 +269,108 @@ class TestSubmitMatch:
         assert ally1["joined_at"] == 300
         self_player = next(p for p in match["player_stats"] if p["is_self"])
         assert self_player["joined_at"] == 0
+
+    async def test_is_teammate_defaults_to_false(self):
+        from main import get_match
+
+        match_id = await create_test_match()
+        match = await get_match(match_id)
+        for ps in match["player_stats"]:
+            assert ps["is_teammate"] is False
+
+    async def test_is_teammate_set_on_submit(self):
+        from main import get_match
+
+        players = make_players()
+        players[1]["is_teammate"] = True
+        match_id = await create_test_match(players=players)
+        match = await get_match(match_id)
+        ally1 = next(p for p in match["player_stats"] if p["player_name"] == "Ally1")
+        assert ally1["is_teammate"] is True
+        self_player = next(p for p in match["player_stats"] if p["is_self"])
+        assert self_player["is_teammate"] is False
+
+    async def test_banned_heroes_on_submit(self):
+        from main import get_match
+
+        match_id = await create_test_match(banned_heroes=["Ana", "Reinhardt"])
+        match = await get_match(match_id)
+        assert match["banned_heroes"] == ["Ana", "Reinhardt"]
+
+    async def test_banned_heroes_defaults_to_none(self):
+        from main import get_match
+
+        match_id = await create_test_match()
+        match = await get_match(match_id)
+        assert match["banned_heroes"] is None
+
+    async def test_banned_heroes_fuzzy_matches(self):
+        from main import get_match
+
+        match_id = await create_test_match(banned_heroes=["ana", "Brigite"])
+        match = await get_match(match_id)
+        assert match["banned_heroes"] == ["Ana", "Brigitte"]
+
+    async def test_banned_heroes_rejects_unknown(self):
+        from main import submit_match
+
+        result = await submit_match(
+            map_name="Lijiang Tower",
+            duration="10:00",
+            mode="CONTROL",
+            queue_type="COMPETITIVE",
+            result="VICTORY",
+            players=make_players(),
+            banned_heroes=["NotAHero"],
+        )
+        assert "error" in result
+        assert "banned hero" in result["error"].lower()
+
+    async def test_swap_snapshots_on_submit(self):
+        from main import get_match
+
+        snapshots = [
+            {"time": 0, "eliminations": 0, "assists": 0, "deaths": 0, "damage": 0, "healing": 0, "mitigation": 0},
+            {"time": 120, "eliminations": 5, "assists": 3, "deaths": 1, "damage": 3000, "healing": 8000, "mitigation": 0},
+            {"time": 400, "eliminations": 15, "assists": 20, "deaths": 5, "damage": 5000, "healing": 12000, "mitigation": 0},
+            {"time": 600, "eliminations": 16, "assists": 21, "deaths": 7, "damage": 5500, "healing": 13000, "mitigation": 0},
+        ]
+        players = make_players(
+            self_heroes=[
+                {"hero_name": "Ana", "started_at": [0, 400], "stats": []},
+                {"hero_name": "Moira", "started_at": [120], "stats": []},
+            ],
+        )
+        players[0]["swap_snapshots"] = snapshots
+        match_id = await create_test_match(duration="10:00", players=players)
+        match = await get_match(match_id)
+        self_player = next(p for p in match["player_stats"] if p["is_self"])
+        assert self_player["swap_snapshots"] == snapshots
+        assert "hero_segments" in self_player
+        segments = self_player["hero_segments"]
+        assert len(segments) == 3
+        # First segment: Ana 0-120
+        assert segments[0]["hero"] == "Ana"
+        assert segments[0]["from"] == 0
+        assert segments[0]["to"] == 120
+        assert segments[0]["duration"] == "2:00"
+        assert segments[0]["eliminations"] == 5
+        # Second segment: Moira 120-400
+        assert segments[1]["hero"] == "Moira"
+        assert segments[1]["eliminations"] == 10
+        # Third segment: Ana 400-600
+        assert segments[2]["hero"] == "Ana"
+        assert segments[2]["eliminations"] == 1
+        assert segments[2]["deaths"] == 2
+
+    async def test_swap_snapshots_absent_means_no_segments(self):
+        from main import get_match
+
+        match_id = await create_test_match()
+        match = await get_match(match_id)
+        self_player = next(p for p in match["player_stats"] if p["is_self"])
+        assert "hero_segments" not in self_player
+        assert "swap_snapshots" not in self_player
 
     async def test_with_rank_fields(self):
         from main import get_match
@@ -845,6 +974,81 @@ class TestEditMatch:
         match = await get_match(match_id)
         updated = next(p for p in match["player_stats"] if p["id"] == self_player["id"])
         assert updated["heroes"][0]["hero_name"] == "Lucio"
+
+    async def test_edit_is_teammate(self):
+        from main import edit_match, get_match
+
+        match_id = await create_test_match()
+        match = await get_match(match_id)
+        ally1 = next(p for p in match["player_stats"] if p["player_name"] == "Ally1")
+        assert ally1["is_teammate"] is False
+        await edit_match(
+            match_id,
+            player_edits=[{"player_stat_id": ally1["id"], "is_teammate": True}],
+        )
+        match = await get_match(match_id)
+        ally1 = next(p for p in match["player_stats"] if p["player_name"] == "Ally1")
+        assert ally1["is_teammate"] is True
+
+    async def test_edit_banned_heroes(self):
+        from main import edit_match, get_match
+
+        match_id = await create_test_match()
+        await edit_match(match_id, banned_heroes=["Ana", "Genji"])
+        match = await get_match(match_id)
+        assert match["banned_heroes"] == ["Ana", "Genji"]
+
+    async def test_edit_clear_banned_heroes(self):
+        from main import edit_match, get_match
+
+        match_id = await create_test_match(banned_heroes=["Ana"])
+        await edit_match(match_id, banned_heroes=[])
+        match = await get_match(match_id)
+        assert match["banned_heroes"] is None
+
+    async def test_edit_banned_heroes_rejects_unknown(self):
+        from main import edit_match
+
+        match_id = await create_test_match()
+        result = await edit_match(match_id, banned_heroes=["FakeHero"])
+        assert "error" in result
+        assert "banned hero" in result["error"].lower()
+
+    async def test_edit_swap_snapshots(self):
+        from main import edit_match, get_match
+
+        match_id = await create_test_match()
+        match = await get_match(match_id)
+        self_player = next(p for p in match["player_stats"] if p["is_self"])
+        snapshots = [
+            {"time": 0, "eliminations": 0, "assists": 0, "deaths": 0, "damage": 0, "healing": 0, "mitigation": 0},
+            {"time": 750, "eliminations": 15, "assists": 20, "deaths": 5, "damage": 5000, "healing": 12000, "mitigation": 0},
+        ]
+        await edit_match(
+            match_id,
+            player_edits=[{"player_stat_id": self_player["id"], "swap_snapshots": snapshots}],
+        )
+        match = await get_match(match_id)
+        updated = next(p for p in match["player_stats"] if p["id"] == self_player["id"])
+        assert updated["swap_snapshots"] == snapshots
+
+    async def test_edit_clear_swap_snapshots(self):
+        from main import edit_match, get_match
+
+        players = make_players()
+        players[0]["swap_snapshots"] = [
+            {"time": 0, "eliminations": 0, "assists": 0, "deaths": 0, "damage": 0, "healing": 0, "mitigation": 0},
+        ]
+        match_id = await create_test_match(players=players)
+        match = await get_match(match_id)
+        self_player = next(p for p in match["player_stats"] if p["is_self"])
+        await edit_match(
+            match_id,
+            player_edits=[{"player_stat_id": self_player["id"], "swap_snapshots": []}],
+        )
+        match = await get_match(match_id)
+        updated = next(p for p in match["player_stats"] if p["id"] == self_player["id"])
+        assert "swap_snapshots" not in updated
 
 
 # ---------------------------------------------------------------------------

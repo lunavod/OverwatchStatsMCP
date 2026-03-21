@@ -4,7 +4,7 @@ An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server for t
 
 ## Features
 
-- **Match tracking** — Record complete 10-player lobbies with per-player stats, multi-hero timelines, notes, screenshots, and rank range metadata
+- **Match tracking** — Record complete 10-player lobbies with per-player stats, multi-hero timelines, swap performance snapshots, banned heroes, teammate flags, notes, screenshots, and rank range metadata
 - **Scoreboard generation** — Automatically generates scoreboard PNG images on match submission, with optional Telegram delivery
 - **Flexible querying** — Filter and sort matches by map, mode, queue type, hero, date range, and stats
 - **Match editing** — Update match metadata, player data (names, titles, stats, heroes), and manage screenshots after submission
@@ -142,6 +142,7 @@ Record a completed match with all player stats.
 | `rank_min`    | string     | No       | Minimum rank in the lobby (e.g. "Gold 3")                |
 | `rank_max`    | string     | No       | Maximum rank in the lobby (e.g. "Diamond 1")             |
 | `is_wide_match` | bool    | No       | Whether this is a wide skill-range match                 |
+| `banned_heroes`  | string[] | No     | List of banned hero names — fuzzy-matched to `heroes.txt` |
 
 **Player object:**
 
@@ -159,14 +160,16 @@ Record a completed match with all player stats.
 | `healing`      | int     | No       | Healing done                                         |
 | `mitigation`   | int     | No       | Damage mitigated                                     |
 | `is_self`      | bool    | No       | Whether this is the recording player (default false) |
+| `is_teammate`  | bool    | No       | Whether this player is a known teammate/group member (default false) |
 | `joined_at`    | int     | No       | Seconds from match start when this player joined (default 0) |
+| `swap_snapshots` | array | No       | Cumulative stat snapshots at each hero swap — each with `time` (int seconds), `eliminations`, `assists`, `deaths`, `damage`, `healing`, `mitigation` (all int). Used to compute per-hero-segment performance deltas in `get_match` response. |
 | `heroes`       | array   | No       | Array of hero dicts, each with `hero_name`, `started_at` (int array of seconds from match start), and `stats` (array of `{label, value, is_featured}`) |
 
 **Name validation:** Map and hero names are fuzzy-matched against canonical lists (`maps.txt` and `heroes.txt`). Close typos from OCR are auto-corrected; completely unrecognizable names return an error and the match is rejected. Map names have parenthetical suffixes (e.g. `(Lunar New Year)`) stripped before matching. The same validation applies to `edit_match`.
 
 ### `get_match`
 
-Retrieve full details for a match by UUID, including all player stats, hero stat values, multi-hero timelines (with computed `primary_hero`, `starting_hero`, `ending_hero`), rank range, notes, backfill flag, and screenshot URLs.
+Retrieve full details for a match by UUID, including all player stats, hero stat values, multi-hero timelines (with computed `primary_hero`, `starting_hero`, `ending_hero`), banned heroes, rank range, notes, backfill flag, and screenshot URLs. When `swap_snapshots` are present on a player, computed `hero_segments` are included with pre-calculated per-segment stat deltas (eliminations, damage, etc. per hero play period).
 
 ### `edit_match`
 
@@ -193,6 +196,7 @@ Edit an existing match's metadata. Only provided fields are updated.
 | `rank_min`             | string   | No       | New minimum rank (empty string to clear)       |
 | `rank_max`             | string   | No       | New maximum rank (empty string to clear)       |
 | `is_wide_match`        | bool     | No       | New wide match flag                            |
+| `banned_heroes`        | string[] | No       | New list of banned heroes (empty list to clear) |
 
 **Player edit object:**
 
@@ -211,7 +215,9 @@ Edit an existing match's metadata. Only provided fields are updated.
 | `healing`        | int    | No       | New healing done                                     |
 | `mitigation`     | int    | No       | New damage mitigated                                 |
 | `is_self`        | bool   | No       | New self flag                                        |
+| `is_teammate`    | bool   | No       | New teammate flag                                    |
 | `joined_at`      | int    | No       | Seconds from match start when player joined          |
+| `swap_snapshots` | array  | No       | New swap snapshots (empty array to clear)             |
 | `heroes`         | array  | No       | Replace all hero stats (same format as `submit_match` player `heroes`) |
 
 ### `list_matches`
@@ -308,8 +314,8 @@ matches
 player_notes (standalone, keyed by username)
 ```
 
-- **matches** — Map, mode, queue type, result, duration, notes, is_backfill, rank_min, rank_max, is_wide_match, scoreboard URLs, timestamps
-- **player_stats** — Per-player per-match: team, role, name, title, hero, 6 stat columns, is_self flag, joined_at (seconds from match start)
+- **matches** — Map, mode, queue type, result, duration, notes, is_backfill, rank_min, rank_max, is_wide_match, banned_heroes, scoreboard URLs, timestamps
+- **player_stats** — Per-player per-match: team, role, name, title, hero, 6 stat columns, is_self, is_teammate, joined_at (seconds from match start), swap_snapshots (cumulative stats at hero swaps)
 - **hero_stats** — Links a player_stat to a hero name (1:N for multi-hero support), with `started_at` timestamps
 - **hero_stat_values** — Arbitrary key-value hero stats (label/value/is_featured)
 - **screenshots** — Screenshot URLs attached to a match
@@ -350,7 +356,7 @@ uv run pytest -k "test_filter"             # keyword match
 tests/
 ├── conftest.py            # Testcontainers setup, DB override, per-test cleanup
 ├── factories.py           # Test data helpers (make_players, create_test_match)
-├── test_match_crud.py     # Submit, get, edit, delete (71 tests)
+├── test_match_crud.py     # Submit, get, edit, delete (89 tests)
 ├── test_list_matches.py   # Filtering, sorting, pagination (23 tests)
 ├── test_analytics.py      # Stats, heroes, teammates, rankings, duration, history (42 tests)
 ├── test_player_notes.py   # Player notes CRUD and integration (11 tests)
@@ -369,7 +375,7 @@ tests/
 │   ├── scoreboard.py          # Scoreboard PNG image generation
 │   ├── telegram.py            # Telegram bot integration for scoreboard delivery
 │   └── webhook.py             # OpenClaw integration (agent-CLI and webhook modes)
-├── tests/                     # Test suite (191 tests, requires Docker)
+├── tests/                     # Test suite (209 tests, requires Docker)
 ├── alembic/
 │   ├── env.py                 # Async migration environment
 │   └── versions/              # Migration scripts
