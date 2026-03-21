@@ -1262,6 +1262,143 @@ async def get_match_player_history(
 
 
 @mcp.tool()
+async def get_player_history(
+    player_names: list[str],
+    match_history: int = 3,
+) -> dict:
+    """Look up match history for a list of players by username.
+
+    Like get_match_player_history but accepts usernames directly instead of a match ID.
+    Shows each player's recent matches with stats, with results shown from their perspective.
+
+    Parameters:
+        player_names: List of player usernames to look up
+        match_history: Number of recent past matches to return per player (default 3)
+    """
+    if not player_names:
+        return {"players_with_history": [], "players_without_history": []}
+
+    # Normalize input names the same way DB names are normalized
+    normalized_inputs = {
+        re.sub(r"\s*\([^)]+\)\s*$", "", name).strip(): name
+        for name in player_names
+    }
+    name_set = set(normalized_inputs.keys())
+
+    normalized_name_col = func.regexp_replace(
+        PlayerStat.player_name, r"\s*\([^)]+\)\s*$", "", "g"
+    )
+
+    async with db.async_session() as session:
+        # CTE with window functions for per-player history
+        norm_col = func.regexp_replace(
+            PlayerStat.player_name, r"\s*\([^)]+\)\s*$", "", "g"
+        ).label("normalized_name")
+
+        rn = func.row_number().over(
+            partition_by=norm_col,
+            order_by=Match.played_at.desc().nullslast(),
+        ).label("rn")
+
+        total_appearances = func.count().over(
+            partition_by=norm_col,
+        ).label("total_appearances")
+
+        inner = (
+            select(
+                norm_col,
+                PlayerStat.player_name,
+                PlayerStat.team,
+                PlayerStat.role,
+                PlayerStat.eliminations,
+                PlayerStat.assists,
+                PlayerStat.deaths,
+                PlayerStat.damage,
+                PlayerStat.healing,
+                PlayerStat.mitigation,
+                Match.id.label("hist_match_id"),
+                Match.map_name,
+                Match.mode,
+                Match.queue_type,
+                Match.result,
+                Match.played_at,
+                Match.duration,
+                rn,
+                total_appearances,
+            )
+            .select_from(PlayerStat)
+            .join(Match)
+            .where(PlayerStat.is_self == False)  # noqa: E712
+            .where(normalized_name_col.in_(name_set))
+        ).cte("history")
+
+        outer = (
+            select(inner)
+            .where(inner.c.rn <= match_history)
+            .order_by(inner.c.normalized_name, inner.c.rn)
+        )
+
+        rows = (await session.execute(outer)).all()
+
+        all_raw_names = list(normalized_inputs.values())
+        notes_map = await _fetch_player_notes(session, all_raw_names)
+
+    # Build result
+    history_by_name: dict[str, list[dict]] = {}
+    appearances_by_name: dict[str, int] = {}
+    for row in rows:
+        nn = row.normalized_name
+        appearances_by_name[nn] = row.total_appearances
+
+        result_for_player = _flip_result(row.result, row.team) if row.result else None
+
+        entry = {
+            "match_id": str(row.hist_match_id),
+            "map_name": row.map_name,
+            "mode": row.mode,
+            "queue_type": row.queue_type,
+            "result_for_player": result_for_player,
+            "played_at": row.played_at.isoformat() if row.played_at else None,
+            "duration": row.duration,
+            "team": row.team,
+            "role": row.role,
+            "stats": {
+                "eliminations": row.eliminations,
+                "assists": row.assists,
+                "deaths": row.deaths,
+                "damage": row.damage,
+                "healing": row.healing,
+                "mitigation": row.mitigation,
+            },
+        }
+        history_by_name.setdefault(nn, []).append(entry)
+
+    players_with_history = []
+    players_without_history = []
+    for nn, original_name in normalized_inputs.items():
+        note = notes_map.get(original_name)
+        if nn in history_by_name:
+            players_with_history.append({
+                "player_name": original_name,
+                "normalized_name": nn,
+                "player_note": note,
+                "total_appearances": appearances_by_name[nn],
+                "history": history_by_name[nn],
+            })
+        else:
+            players_without_history.append({
+                "player_name": original_name,
+                "normalized_name": nn,
+                "player_note": note,
+            })
+
+    return {
+        "players_with_history": players_with_history,
+        "players_without_history": players_without_history,
+    }
+
+
+@mcp.tool()
 async def get_match_rankings(
     queue_type: str | None = None,
     from_date: str | None = None,

@@ -590,3 +590,56 @@ class TestMatchPlayerHistory:
             p["player_name"] for p in result["players_without_history"]
         ]
         assert "TestPlayer" not in all_names
+
+
+# ===========================================================================
+# get_player_history
+# ===========================================================================
+
+
+class TestPlayerHistory:
+    async def test_empty_list(self):
+        from main import get_player_history
+
+        result = await get_player_history([])
+        assert result == {"players_with_history": [], "players_without_history": []}
+
+    async def test_finds_known_players(self):
+        from main import get_player_history
+
+        await _seed_analytics()
+        # Enemy1-5 appear in all seeded matches
+        result = await get_player_history(["Enemy1", "Enemy2"])
+        names_with = {p["player_name"] for p in result["players_with_history"]}
+        assert "Enemy1" in names_with
+        assert "Enemy2" in names_with
+
+    async def test_unknown_player_in_without_history(self):
+        from main import get_player_history
+
+        await _seed_analytics()
+        result = await get_player_history(["NeverSeenBefore"])
+        assert len(result["players_with_history"]) == 0
+        assert len(result["players_without_history"]) == 1
+        assert result["players_without_history"][0]["player_name"] == "NeverSeenBefore"
+
+    async def test_match_history_limit(self):
+        from main import get_player_history
+
+        await _seed_analytics()
+        result = await get_player_history(["Enemy1"], match_history=1)
+        for player in result["players_with_history"]:
+            assert len(player["history"]) <= 1
+
+    async def test_history_entries_have_stats(self):
+        from main import get_player_history
+
+        await _seed_analytics()
+        result = await get_player_history(["Enemy1"])
+        assert result["players_with_history"]
+        player = result["players_with_history"][0]
+        assert "total_appearances" in player
+        entry = player["history"][0]
+        assert "stats" in entry
+        assert "eliminations" in entry["stats"]
+        assert "match_id" in entry

@@ -253,6 +253,12 @@ Given a match ID, finds all non-self players who have appeared in other recorded
 
 **Parameters:** `match_id`, `match_history` (number of recent matches per player, default 3)
 
+### `get_player_history`
+
+Like `get_match_player_history` but accepts a list of player usernames directly instead of a match ID. Looks up each player's recent match history with stats. Results are split into `players_with_history` and `players_without_history`. Name normalization strips title suffixes like `(Bronze)`.
+
+**Parameters:** `player_names` (string[]), `match_history` (number of recent matches per player, default 3)
+
 ### `get_match_rankings`
 
 Computes the self-player's average rank within each match lobby for all 6 stat categories, along with percentiles: `(lobby_size - rank) / (lobby_size - 1)`.
@@ -358,7 +364,7 @@ tests/
 ├── factories.py           # Test data helpers (make_players, create_test_match)
 ├── test_match_crud.py     # Submit, get, edit, delete (89 tests)
 ├── test_list_matches.py   # Filtering, sorting, pagination (23 tests)
-├── test_analytics.py      # Stats, heroes, teammates, rankings, duration, history (42 tests)
+├── test_analytics.py      # Stats, heroes, teammates, rankings, duration, history (47 tests)
 ├── test_player_notes.py   # Player notes CRUD and integration (11 tests)
 ├── test_screenshots.py    # Screenshot upload and serving (11 tests)
 └── test_webhook.py        # Webhook and agent-CLI notification (34 tests)
@@ -375,7 +381,7 @@ tests/
 │   ├── scoreboard.py          # Scoreboard PNG image generation
 │   ├── telegram.py            # Telegram bot integration for scoreboard delivery
 │   └── webhook.py             # OpenClaw integration (agent-CLI and webhook modes)
-├── tests/                     # Test suite (209 tests, requires Docker)
+├── tests/                     # Test suite (214 tests, requires Docker)
 ├── alembic/
 │   ├── env.py                 # Async migration environment
 │   └── versions/              # Migration scripts
