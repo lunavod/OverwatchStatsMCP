@@ -270,25 +270,25 @@ class TestSubmitMatch:
         self_player = next(p for p in match["player_stats"] if p["is_self"])
         assert self_player["joined_at"] == 0
 
-    async def test_is_teammate_defaults_to_false(self):
+    async def test_in_party_defaults_to_false(self):
         from main import get_match
 
         match_id = await create_test_match()
         match = await get_match(match_id)
         for ps in match["player_stats"]:
-            assert ps["is_teammate"] is False
+            assert ps["in_party"] is False
 
-    async def test_is_teammate_set_on_submit(self):
+    async def test_in_party_set_on_submit(self):
         from main import get_match
 
         players = make_players()
-        players[1]["is_teammate"] = True
+        players[1]["in_party"] = True
         match_id = await create_test_match(players=players)
         match = await get_match(match_id)
         ally1 = next(p for p in match["player_stats"] if p["player_name"] == "Ally1")
-        assert ally1["is_teammate"] is True
+        assert ally1["in_party"] is True
         self_player = next(p for p in match["player_stats"] if p["is_self"])
-        assert self_player["is_teammate"] is False
+        assert self_player["in_party"] is False
 
     async def test_banned_heroes_on_submit(self):
         from main import get_match
@@ -975,20 +975,20 @@ class TestEditMatch:
         updated = next(p for p in match["player_stats"] if p["id"] == self_player["id"])
         assert updated["heroes"][0]["hero_name"] == "Lucio"
 
-    async def test_edit_is_teammate(self):
+    async def test_edit_in_party(self):
         from main import edit_match, get_match
 
         match_id = await create_test_match()
         match = await get_match(match_id)
         ally1 = next(p for p in match["player_stats"] if p["player_name"] == "Ally1")
-        assert ally1["is_teammate"] is False
+        assert ally1["in_party"] is False
         await edit_match(
             match_id,
-            player_edits=[{"player_stat_id": ally1["id"], "is_teammate": True}],
+            player_edits=[{"player_stat_id": ally1["id"], "in_party": True}],
         )
         match = await get_match(match_id)
         ally1 = next(p for p in match["player_stats"] if p["player_name"] == "Ally1")
-        assert ally1["is_teammate"] is True
+        assert ally1["in_party"] is True
 
     async def test_edit_banned_heroes(self):
         from main import edit_match, get_match

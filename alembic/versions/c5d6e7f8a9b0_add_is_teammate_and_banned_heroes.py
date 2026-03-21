@@ -1,4 +1,4 @@
-"""add is_teammate to player_stats and banned_heroes to matches
+"""add in_party to player_stats and banned_heroes to matches
 
 Revision ID: c5d6e7f8a9b0
 Revises: b4c5d6e7f8a9
@@ -19,12 +19,12 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Add is_teammate to player_stats and banned_heroes to matches."""
-    op.add_column('player_stats', sa.Column('is_teammate', sa.Boolean(), nullable=False, server_default='false'))
+    """Add in_party to player_stats and banned_heroes to matches."""
+    op.add_column('player_stats', sa.Column('in_party', sa.Boolean(), nullable=False, server_default='false'))
     op.add_column('matches', sa.Column('banned_heroes', sa.JSON(), nullable=True))
 
 
 def downgrade() -> None:
-    """Remove is_teammate and banned_heroes columns."""
-    op.drop_column('player_stats', 'is_teammate')
+    """Remove in_party and banned_heroes columns."""
+    op.drop_column('player_stats', 'in_party')
     op.drop_column('matches', 'banned_heroes')

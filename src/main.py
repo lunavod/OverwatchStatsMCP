@@ -249,7 +249,7 @@ async def submit_match(
             hero_name (optional string, hero played — case-insensitive),
             eliminations, assists, deaths, damage, healing, mitigation (all int|null),
             is_self (bool, default false),
-            is_teammate (bool, default false — marks a known teammate/group member),
+            in_party (bool, default false — marks a player in the recording player's group),
             joined_at (int, seconds from match start when this player joined, default 0),
             heroes (optional array of hero dicts, each with hero_name, started_at [int array of seconds from match start], and stats [{label, value, is_featured}]),
             swap_snapshots (optional array of cumulative stat snapshots at each hero swap, each with time (int seconds), eliminations, assists, deaths, damage, healing, mitigation — all int)
@@ -347,7 +347,7 @@ async def submit_match(
                     healing=p.get("healing"),
                     mitigation=p.get("mitigation"),
                     is_self=p.get("is_self", False),
-                    is_teammate=p.get("is_teammate", False),
+                    in_party=p.get("in_party", False),
                     joined_at=p.get("joined_at", 0),
                     swap_snapshots=p.get("swap_snapshots"),
                 )
@@ -593,7 +593,7 @@ async def get_match(match_id: str) -> dict:
                 "healing": ps.healing,
                 "mitigation": ps.mitigation,
                 "is_self": ps.is_self,
-                "is_teammate": ps.is_teammate,
+                "in_party": ps.in_party,
                 "joined_at": ps.joined_at,
                 **_build_player_hero_fields(ps, match_duration_secs),
             }
@@ -1467,7 +1467,7 @@ async def edit_match(
             hero (string or empty string to clear — hero played),
             team (ALLY/ENEMY), role (TANK/DPS/SUPPORT),
             eliminations, assists, deaths, damage, healing, mitigation (int|null),
-            is_self (bool), is_teammate (bool), joined_at (int),
+            is_self (bool), in_party (bool), joined_at (int),
             swap_snapshots (array of cumulative stat snapshots, or empty array to clear),
             heroes (array to replace all hero stats for this player, each with hero_name, started_at, stats)
     """
@@ -1605,8 +1605,8 @@ async def edit_match(
                         ps.mitigation = pe["mitigation"]
                     if "is_self" in pe:
                         ps.is_self = pe["is_self"]
-                    if "is_teammate" in pe:
-                        ps.is_teammate = pe["is_teammate"]
+                    if "in_party" in pe:
+                        ps.in_party = pe["in_party"]
                     if "joined_at" in pe:
                         ps.joined_at = pe["joined_at"]
                     if "swap_snapshots" in pe:

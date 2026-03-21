@@ -4,7 +4,7 @@ An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server for t
 
 ## Features
 
-- **Match tracking** — Record complete 10-player lobbies with per-player stats, multi-hero timelines, swap performance snapshots, banned heroes, teammate flags, notes, screenshots, and rank range metadata
+- **Match tracking** — Record complete 10-player lobbies with per-player stats, multi-hero timelines, swap performance snapshots, banned heroes, notes, screenshots, and rank range metadata
 - **Scoreboard generation** — Automatically generates scoreboard PNG images on match submission, with optional Telegram delivery
 - **Flexible querying** — Filter and sort matches by map, mode, queue type, hero, date range, and stats
 - **Match editing** — Update match metadata, player data (names, titles, stats, heroes), and manage screenshots after submission
@@ -160,7 +160,7 @@ Record a completed match with all player stats.
 | `healing`      | int     | No       | Healing done                                         |
 | `mitigation`   | int     | No       | Damage mitigated                                     |
 | `is_self`      | bool    | No       | Whether this is the recording player (default false) |
-| `is_teammate`  | bool    | No       | Whether this player is a known teammate/group member (default false) |
+| `in_party`     | bool    | No       | Whether this player is in the recording player's group (default false) |
 | `joined_at`    | int     | No       | Seconds from match start when this player joined (default 0) |
 | `swap_snapshots` | array | No       | Cumulative stat snapshots at each hero swap — each with `time` (int seconds), `eliminations`, `assists`, `deaths`, `damage`, `healing`, `mitigation` (all int). Used to compute per-hero-segment performance deltas in `get_match` response. |
 | `heroes`       | array   | No       | Array of hero dicts, each with `hero_name`, `started_at` (int array of seconds from match start), and `stats` (array of `{label, value, is_featured}`) |
@@ -215,7 +215,7 @@ Edit an existing match's metadata. Only provided fields are updated.
 | `healing`        | int    | No       | New healing done                                     |
 | `mitigation`     | int    | No       | New damage mitigated                                 |
 | `is_self`        | bool   | No       | New self flag                                        |
-| `is_teammate`    | bool   | No       | New teammate flag                                    |
+| `in_party`       | bool   | No       | New party member flag                                |
 | `joined_at`      | int    | No       | Seconds from match start when player joined          |
 | `swap_snapshots` | array  | No       | New swap snapshots (empty array to clear)             |
 | `heroes`         | array  | No       | Replace all hero stats (same format as `submit_match` player `heroes`) |
@@ -315,7 +315,7 @@ player_notes (standalone, keyed by username)
 ```
 
 - **matches** — Map, mode, queue type, result, duration, notes, is_backfill, rank_min, rank_max, is_wide_match, banned_heroes, scoreboard URLs, timestamps
-- **player_stats** — Per-player per-match: team, role, name, title, hero, 6 stat columns, is_self, is_teammate, joined_at (seconds from match start), swap_snapshots (cumulative stats at hero swaps)
+- **player_stats** — Per-player per-match: team, role, name, title, hero, 6 stat columns, is_self, in_party, joined_at (seconds from match start), swap_snapshots (cumulative stats at hero swaps)
 - **hero_stats** — Links a player_stat to a hero name (1:N for multi-hero support), with `started_at` timestamps
 - **hero_stat_values** — Arbitrary key-value hero stats (label/value/is_featured)
 - **screenshots** — Screenshot URLs attached to a match
