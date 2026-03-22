@@ -422,6 +422,22 @@ class TestSubmitMatch:
         match = await get_match(match_id)
         assert match["initial_team_side"] == "DEFEND"
 
+    async def test_score_progression_on_submit(self):
+        from main import get_match
+
+        match_id = await create_test_match(score_progression=["1:0", "1:1", "2:1"])
+        match = await get_match(match_id)
+        assert match["score_progression"] == ["1:0", "1:1", "2:1"]
+        assert match["final_score"] == "2:1"
+
+    async def test_score_progression_defaults_to_none(self):
+        from main import get_match
+
+        match_id = await create_test_match()
+        match = await get_match(match_id)
+        assert match["score_progression"] is None
+        assert match["final_score"] is None
+
     async def test_normalizes_map_name(self):
         from main import get_match
 
@@ -561,6 +577,8 @@ class TestGetMatch:
             "is_wide_match",
             "banned_heroes",
             "initial_team_side",
+            "score_progression",
+            "final_score",
             "screenshots",
             "player_stats",
         }
@@ -1051,6 +1069,24 @@ class TestEditMatch:
         await edit_match(match_id, initial_team_side="")
         match = await get_match(match_id)
         assert match["initial_team_side"] is None
+
+    async def test_edit_score_progression(self):
+        from main import edit_match, get_match
+
+        match_id = await create_test_match()
+        await edit_match(match_id, score_progression=["0:1", "1:1"])
+        match = await get_match(match_id)
+        assert match["score_progression"] == ["0:1", "1:1"]
+        assert match["final_score"] == "1:1"
+
+    async def test_edit_clear_score_progression(self):
+        from main import edit_match, get_match
+
+        match_id = await create_test_match(score_progression=["1:0"])
+        await edit_match(match_id, score_progression=[])
+        match = await get_match(match_id)
+        assert match["score_progression"] is None
+        assert match["final_score"] is None
 
     async def test_edit_swap_snapshots(self):
         from main import edit_match, get_match

@@ -235,6 +235,7 @@ async def submit_match(
     is_wide_match: bool | None = None,
     banned_heroes: list[str] | None = None,
     initial_team_side: str | None = None,
+    score_progression: list[str] | None = None,
 ) -> dict:
     """Submit a completed Overwatch match with all player stats.
 
@@ -266,6 +267,7 @@ async def submit_match(
         is_wide_match: Optional flag indicating a wide skill-range match
         banned_heroes: Optional list of banned hero names (case-insensitive, fuzzy-matched)
         initial_team_side: Optional initial side — ATTACK or DEFEND
+        score_progression: Optional array of round scores as "X:Y" strings (e.g. ["1:0", "1:1", "2:1"])
     """
     # --- Validate & normalize map name ---
     normalized_map = normalize_map_name(map_name)
@@ -325,6 +327,7 @@ async def submit_match(
                 is_wide_match=is_wide_match,
                 banned_heroes=normalized_banned,
                 initial_team_side=initial_team_side.upper() if initial_team_side else None,
+                score_progression=score_progression,
             )
             session.add(match)
 
@@ -580,6 +583,8 @@ async def get_match(match_id: str) -> dict:
         "is_wide_match": match.is_wide_match,
         "banned_heroes": match.banned_heroes,
         "initial_team_side": match.initial_team_side,
+        "score_progression": match.score_progression,
+        "final_score": match.score_progression[-1] if match.score_progression else None,
         "screenshots": [s.url for s in match.screenshots],
         "player_stats": [
             {
@@ -739,6 +744,8 @@ async def list_matches(
                 "is_wide_match": m.is_wide_match,
                 "banned_heroes": m.banned_heroes,
                 "initial_team_side": m.initial_team_side,
+                "score_progression": m.score_progression,
+                "final_score": m.score_progression[-1] if m.score_progression else None,
                 "sort_value": int(sv) if sv is not None else None,
             }
             matches_out.append(d)
@@ -763,6 +770,8 @@ async def list_matches(
                     "is_wide_match": m.is_wide_match,
                     "banned_heroes": m.banned_heroes,
                     "initial_team_side": m.initial_team_side,
+                    "score_progression": m.score_progression,
+                    "final_score": m.score_progression[-1] if m.score_progression else None,
                 }
             )
 
@@ -1583,6 +1592,7 @@ async def edit_match(
     is_wide_match: bool | None = None,
     banned_heroes: list[str] | None = None,
     initial_team_side: str | None = None,
+    score_progression: list[str] | None = None,
 ) -> dict:
     """Edit an existing match's metadata. Only provided fields are updated.
 
@@ -1602,6 +1612,7 @@ async def edit_match(
         is_wide_match: New wide match flag
         banned_heroes: New list of banned hero names (pass empty list to clear)
         initial_team_side: New initial side — ATTACK or DEFEND (pass empty string to clear)
+        score_progression: New score progression as array of "X:Y" strings (pass empty list to clear)
         screenshots_to_add: List of screenshot URLs to attach
         screenshot_uploads: List of base64 image uploads, each with keys:
             data (base64-encoded image bytes), filename (optional, used for extension detection)
@@ -1708,6 +1719,8 @@ async def edit_match(
                 match.banned_heroes = normalized_banned or None
             if initial_team_side is not None:
                 match.initial_team_side = initial_team_side.upper() if initial_team_side else None
+            if score_progression is not None:
+                match.score_progression = score_progression or None
 
             if screenshots_to_remove:
                 remove_set = set(screenshots_to_remove)
