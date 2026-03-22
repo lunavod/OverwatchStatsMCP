@@ -401,6 +401,27 @@ class TestSubmitMatch:
         assert match["rank_max"] is None
         assert match["is_wide_match"] is None
 
+    async def test_initial_team_side_on_submit(self):
+        from main import get_match
+
+        match_id = await create_test_match(initial_team_side="ATTACK")
+        match = await get_match(match_id)
+        assert match["initial_team_side"] == "ATTACK"
+
+    async def test_initial_team_side_defaults_to_none(self):
+        from main import get_match
+
+        match_id = await create_test_match()
+        match = await get_match(match_id)
+        assert match["initial_team_side"] is None
+
+    async def test_initial_team_side_uppercased(self):
+        from main import get_match
+
+        match_id = await create_test_match(initial_team_side="defend")
+        match = await get_match(match_id)
+        assert match["initial_team_side"] == "DEFEND"
+
     async def test_normalizes_map_name(self):
         from main import get_match
 
@@ -539,6 +560,7 @@ class TestGetMatch:
             "rank_max",
             "is_wide_match",
             "banned_heroes",
+            "initial_team_side",
             "screenshots",
             "player_stats",
         }
@@ -1013,6 +1035,22 @@ class TestEditMatch:
         result = await edit_match(match_id, banned_heroes=["FakeHero"])
         assert "error" in result
         assert "banned hero" in result["error"].lower()
+
+    async def test_edit_initial_team_side(self):
+        from main import edit_match, get_match
+
+        match_id = await create_test_match()
+        await edit_match(match_id, initial_team_side="DEFEND")
+        match = await get_match(match_id)
+        assert match["initial_team_side"] == "DEFEND"
+
+    async def test_edit_clear_initial_team_side(self):
+        from main import edit_match, get_match
+
+        match_id = await create_test_match(initial_team_side="ATTACK")
+        await edit_match(match_id, initial_team_side="")
+        match = await get_match(match_id)
+        assert match["initial_team_side"] is None
 
     async def test_edit_swap_snapshots(self):
         from main import edit_match, get_match

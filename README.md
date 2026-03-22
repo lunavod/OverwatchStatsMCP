@@ -143,6 +143,7 @@ Record a completed match with all player stats.
 | `rank_max`    | string     | No       | Maximum rank in the lobby (e.g. "Diamond 1")             |
 | `is_wide_match` | bool    | No       | Whether this is a wide skill-range match                 |
 | `banned_heroes`  | string[] | No     | List of banned hero names — fuzzy-matched to `heroes.txt` |
+| `initial_team_side` | string | No    | Initial side — `ATTACK` or `DEFEND`                      |
 
 **Player object:**
 
@@ -197,6 +198,7 @@ Edit an existing match's metadata. Only provided fields are updated.
 | `rank_max`             | string   | No       | New maximum rank (empty string to clear)       |
 | `is_wide_match`        | bool     | No       | New wide match flag                            |
 | `banned_heroes`        | string[] | No       | New list of banned heroes (empty list to clear) |
+| `initial_team_side`    | string   | No       | New initial side — `ATTACK` or `DEFEND` (empty string to clear) |
 
 **Player edit object:**
 
@@ -320,7 +322,7 @@ matches
 player_notes (standalone, keyed by username)
 ```
 
-- **matches** — Map, mode, queue type, result, duration, notes, is_backfill, rank_min, rank_max, is_wide_match, banned_heroes, scoreboard URLs, timestamps
+- **matches** — Map, mode, queue type, result, duration, notes, is_backfill, rank_min, rank_max, is_wide_match, banned_heroes, initial_team_side, scoreboard URLs, timestamps
 - **player_stats** — Per-player per-match: team, role, name, title, hero, 6 stat columns, is_self, in_party, joined_at (seconds from match start), swap_snapshots (cumulative stats at hero swaps)
 - **hero_stats** — Links a player_stat to a hero name (1:N for multi-hero support), with `started_at` timestamps
 - **hero_stat_values** — Arbitrary key-value hero stats (label/value/is_featured)
@@ -362,7 +364,7 @@ uv run pytest -k "test_filter"             # keyword match
 tests/
 ├── conftest.py            # Testcontainers setup, DB override, per-test cleanup
 ├── factories.py           # Test data helpers (make_players, create_test_match)
-├── test_match_crud.py     # Submit, get, edit, delete (89 tests)
+├── test_match_crud.py     # Submit, get, edit, delete (94 tests)
 ├── test_list_matches.py   # Filtering, sorting, pagination (23 tests)
 ├── test_analytics.py      # Stats, heroes, teammates, rankings, duration, history (47 tests)
 ├── test_player_notes.py   # Player notes CRUD and integration (11 tests)
@@ -381,7 +383,7 @@ tests/
 │   ├── scoreboard.py          # Scoreboard PNG image generation
 │   ├── telegram.py            # Telegram bot integration for scoreboard delivery
 │   └── webhook.py             # OpenClaw integration (agent-CLI and webhook modes)
-├── tests/                     # Test suite (214 tests, requires Docker)
+├── tests/                     # Test suite (219 tests, requires Docker)
 ├── alembic/
 │   ├── env.py                 # Async migration environment
 │   └── versions/              # Migration scripts

@@ -26,6 +26,7 @@ class Match(Base):
     rank_max: Mapped[str | None] = mapped_column(String, nullable=True)
     is_wide_match: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     banned_heroes: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    initial_team_side: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
