@@ -348,6 +348,103 @@ class TestHeroDetailStats:
 
 
 # ===========================================================================
+# get_hero_stat_series
+# ===========================================================================
+
+
+class TestHeroStatSeries:
+    async def test_returns_points(self):
+        from main import get_hero_stat_series
+
+        await _seed_analytics()
+        result = await get_hero_stat_series(hero_name="Ana", label="Nano Boost Assists")
+        assert result["hero_name"] == "Ana"
+        assert result["label"] == "Nano Boost Assists"
+        assert result["count"] >= 1
+        assert len(result["points"]) >= 1
+
+    async def test_point_shape(self):
+        from main import get_hero_stat_series
+
+        await _seed_analytics()
+        result = await get_hero_stat_series(hero_name="Ana", label="Nano Boost Assists")
+        point = result["points"][0]
+        assert "match_id" in point
+        assert "played_at" in point
+        assert "value" in point
+        assert "map_name" in point
+        assert "result" in point
+        assert "duration" in point
+        assert "queue_type" in point
+
+    async def test_has_avg(self):
+        from main import get_hero_stat_series
+
+        await _seed_analytics()
+        result = await get_hero_stat_series(hero_name="Ana", label="Nano Boost Assists")
+        assert "avg" in result
+        assert result["avg"] == result["points"][0]["value"] or result["count"] > 1
+
+    async def test_case_insensitive(self):
+        from main import get_hero_stat_series
+
+        await _seed_analytics()
+        result = await get_hero_stat_series(hero_name="ana", label="nano boost assists")
+        assert result["count"] >= 1
+
+    async def test_queue_type_filter(self):
+        from main import get_hero_stat_series
+
+        await _seed_analytics()
+        comp = await get_hero_stat_series(
+            hero_name="Ana", label="Nano Boost Assists", queue_type="COMPETITIVE"
+        )
+        qp = await get_hero_stat_series(
+            hero_name="Ana", label="Nano Boost Assists", queue_type="QUICKPLAY"
+        )
+        assert comp["count"] == 1
+        assert qp["count"] == 1
+
+    async def test_empty_result(self):
+        from main import get_hero_stat_series
+
+        await _seed_analytics()
+        result = await get_hero_stat_series(hero_name="Ana", label="Nonexistent Stat")
+        assert result["count"] == 0
+        assert result["points"] == []
+
+    async def test_ordered_by_played_at(self):
+        from main import get_hero_stat_series
+
+        await _seed_analytics()
+        result = await get_hero_stat_series(hero_name="Ana", label="Nano Boost Assists")
+        dates = [p["played_at"] for p in result["points"] if p["played_at"]]
+        assert dates == sorted(dates)
+
+    async def test_unit_detection(self):
+        from main import get_hero_stat_series
+
+        await _seed_analytics()
+        result = await get_hero_stat_series(hero_name="Ana", label="Nano Boost Assists")
+        assert result["unit"] in ("percent", "time", "number")
+
+    async def test_date_filters(self):
+        from main import get_hero_stat_series
+
+        await _seed_analytics()
+        # Ana appears in Match 1 (2026-01-10) and Match 3 (2026-01-15)
+        result = await get_hero_stat_series(
+            hero_name="Ana",
+            label="Nano Boost Assists",
+            from_date="2026-01-12",
+            to_date="2026-01-16",
+        )
+        # Should only include Match 3
+        assert result["count"] == 1
+        assert result["points"][0]["map_name"] == "King's Row"
+
+
+# ===========================================================================
 # get_teammate_stats
 # ===========================================================================
 

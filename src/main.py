@@ -1011,6 +1011,93 @@ async def get_hero_detail_stats(
 
 
 @mcp.tool()
+async def get_hero_stat_series(
+    hero_name: str,
+    label: str,
+    queue_type: str | None = None,
+    from_date: str | None = None,
+    to_date: str | None = None,
+) -> dict:
+    """Get a time-series of a single hero stat across all matches for the self-player.
+
+    Returns individual data points per match ordered by played_at, along with
+    the overall count and average. Useful for tracking stat trends over time.
+
+    Parameters:
+        hero_name: Hero to look up (case-insensitive)
+        label: Stat label to retrieve (case-insensitive, e.g. "Weapon Accuracy")
+        queue_type: Filter to COMPETITIVE or QUICKPLAY
+        from_date: ISO 8601 — only matches on or after this date
+        to_date: ISO 8601 — only matches on or before this date
+    """
+    numeric_val = _safe_float_cast()
+
+    async with db.async_session() as session:
+        stmt = (
+            select(
+                Match.id.label("match_id"),
+                Match.played_at,
+                numeric_val.label("numeric_value"),
+                Match.map_name,
+                Match.result,
+                Match.duration,
+                Match.queue_type,
+                HeroStatValue.value.contains("%").label("is_percent"),
+                HeroStatValue.value.op("~")(r"^\d+:\d+$").label("is_time"),
+            )
+            .select_from(HeroStatValue)
+            .join(HeroStat)
+            .join(PlayerStat)
+            .join(Match)
+            .where(PlayerStat.is_self == True)  # noqa: E712
+            .where(func.lower(HeroStat.hero_name) == hero_name.lower())
+            .where(func.lower(HeroStatValue.label) == label.lower())
+        )
+
+        stmt = _apply_match_filters(stmt, queue_type, from_date, to_date)
+        stmt = stmt.order_by(Match.played_at.asc())
+
+        rows = (await session.execute(stmt)).all()
+
+    if not rows:
+        return {"hero_name": hero_name, "label": label, "unit": "number", "count": 0, "avg": 0.0, "points": []}
+
+    # Determine unit from first row with data
+    first = rows[0]
+    unit = "percent" if first.is_percent else ("time" if first.is_time else "number")
+
+    points = []
+    total = 0.0
+    count = 0
+    for row in rows:
+        val = row.numeric_value
+        if val is None:
+            continue
+        count += 1
+        total += float(val)
+        points.append(
+            {
+                "match_id": str(row.match_id),
+                "played_at": row.played_at.isoformat() if row.played_at else None,
+                "value": _f(val),
+                "map_name": row.map_name,
+                "result": row.result,
+                "duration": row.duration,
+                "queue_type": row.queue_type,
+            }
+        )
+
+    return {
+        "hero_name": hero_name,
+        "label": label,
+        "unit": unit,
+        "count": count,
+        "avg": _f(total / count) if count else 0.0,
+        "points": points,
+    }
+
+
+@mcp.tool()
 async def get_teammate_stats(
     queue_type: str | None = None,
     from_date: str | None = None,

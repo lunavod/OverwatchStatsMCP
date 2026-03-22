@@ -245,6 +245,13 @@ Per-hero breakdowns from hero-specific stat values (the stats shown on the hero 
 
 **Filters:** `hero_name`, `label`, `queue_type`, `from_date`, `to_date`
 
+### `get_hero_stat_series`
+
+Time-series of a single hero stat across all matches for the self-player. Returns individual data points per match ordered by `played_at`, along with overall count and average. Each point includes `match_id`, `played_at`, `value`, `map_name`, `result`, `duration`, and `queue_type`.
+
+**Parameters:** `hero_name`, `label`
+**Filters:** `queue_type`, `from_date`, `to_date`
+
 ### `get_teammate_stats`
 
 Win/loss stats grouped by teammate (non-self allies). Normalizes player names by stripping rank suffixes like `" (Bronze)"`.
