@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, Uuid, func
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from db import Base
@@ -137,7 +137,7 @@ class MatchFile(Base):
         Uuid, ForeignKey("matches.id", ondelete="CASCADE")
     )
     filename: Mapped[str] = mapped_column(String)
-    size: Mapped[int] = mapped_column(Integer)
+    size: Mapped[int] = mapped_column(BigInteger)
     tus_id: Mapped[str] = mapped_column(String, unique=True)
     uploaded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

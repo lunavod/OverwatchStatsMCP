@@ -29,15 +29,24 @@ async def tusd_hook(request: Request) -> JSONResponse:
     hook_name = request.headers.get("Hook-Name", "")
     body = await request.json()
 
-    if hook_name == "pre-create":
-        return await _pre_create(request, body)
-    elif hook_name == "post-finish":
-        return await _post_finish(body)
+    # tusd v2 sends the event type in the JSON body as "Type", not as a header
+    hook_type = body.get("Type", "")
+
+    # tusd v2 nests data under "Event"; v1 puts it at the top level
+    event_data = body.get("Event", body)
+
+    event = hook_name or hook_type
+
+    if event == "pre-create":
+        return await _pre_create(request, event_data)
+    elif event == "post-finish":
+        return await _post_finish(event_data)
     else:
+        logger.warning("Unknown hook event: %r — returning ok", event)
         return JSONResponse({"ok": True})
 
 
-async def _pre_create(request: Request, body: dict) -> JSONResponse:
+async def _pre_create(request: Request, event_data: dict) -> JSONResponse:
     """Validate auth key and required metadata before accepting an upload."""
     if not TUSD_AUTH_KEY:
         logger.warning("TUSD_AUTH_KEY not set — rejecting all uploads")
@@ -47,7 +56,7 @@ async def _pre_create(request: Request, body: dict) -> JSONResponse:
         )
 
     # tusd forwards the original client headers in HTTPRequest.Header
-    http_req = body.get("HTTPRequest", {})
+    http_req = event_data.get("HTTPRequest", {})
     headers = http_req.get("Header", {})
     # Headers are lists of values
     auth_values = headers.get("Authorization", [])
@@ -61,7 +70,7 @@ async def _pre_create(request: Request, body: dict) -> JSONResponse:
         )
 
     # Require match_id in metadata
-    upload = body.get("Upload", {})
+    upload = event_data.get("Upload", {})
     metadata = upload.get("MetaData", {})
     match_id = metadata.get("match_id", "")
     if not match_id:
@@ -82,9 +91,9 @@ async def _pre_create(request: Request, body: dict) -> JSONResponse:
     return JSONResponse({"ok": True})
 
 
-async def _post_finish(body: dict) -> JSONResponse:
+async def _post_finish(event_data: dict) -> JSONResponse:
     """Create a MatchFile row after a successful upload, then enforce storage limit."""
-    upload = body.get("Upload", {})
+    upload = event_data.get("Upload", {})
     metadata = upload.get("MetaData", {})
     match_id_str = metadata.get("match_id", "")
     filename = metadata.get("filename", "unknown")
@@ -99,30 +108,59 @@ async def _post_finish(body: dict) -> JSONResponse:
 
     match_uuid = uuid.UUID(match_id_str)
 
-    async with db.async_session() as session:
-        async with session.begin():
-            # Verify the match exists
-            match = (
-                await session.execute(
-                    select(Match).where(Match.id == match_uuid)
-                )
-            ).scalar_one_or_none()
+    try:
+        async with db.async_session() as session:
+            async with session.begin():
+                # Verify the match exists
+                match = (
+                    await session.execute(
+                        select(Match).where(Match.id == match_uuid)
+                    )
+                ).scalar_one_or_none()
 
-            if not match:
-                return JSONResponse(
-                    {"ok": False, "error": "Match not found"},
-                    status_code=404,
-                )
+                if not match:
+                    return JSONResponse(
+                        {"ok": False, "error": "Match not found"},
+                        status_code=404,
+                    )
 
-            match.has_attachments = True
-            session.add(
-                MatchFile(
-                    match_id=match_uuid,
-                    filename=filename,
-                    size=size,
-                    tus_id=tus_id,
+                # Replace existing file with same name for this match
+                old_file = (
+                    await session.execute(
+                        select(MatchFile).where(
+                            MatchFile.match_id == match_uuid,
+                            MatchFile.filename == filename,
+                        )
+                    )
+                ).scalar_one_or_none()
+
+                if old_file:
+                    old_tus_id = old_file.tus_id
+                    await session.delete(old_file)
+                    await session.flush()
+                    # Clean up old file from disk
+                    for path in [TUSD_DATA_DIR / old_tus_id, TUSD_DATA_DIR / f"{old_tus_id}.info"]:
+                        try:
+                            path.unlink(missing_ok=True)
+                        except OSError as exc:
+                            logger.warning("Failed to delete old file %s: %s", path, exc)
+                    logger.info("Replaced existing file %s (old tus_id=%s) for match %s", filename, old_tus_id, match_id_str)
+
+                match.has_attachments = True
+                session.add(
+                    MatchFile(
+                        match_id=match_uuid,
+                        filename=filename,
+                        size=size,
+                        tus_id=tus_id,
+                    )
                 )
-            )
+    except Exception:
+        logger.exception("Failed to register file %s for match %s", tus_id, match_id_str)
+        return JSONResponse(
+            {"ok": False, "error": "Internal error saving file record"},
+            status_code=500,
+        )
 
     logger.info("Registered file %s (%s) for match %s", filename, tus_id, match_id_str)
 

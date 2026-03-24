@@ -100,6 +100,10 @@ for filepath in files_to_upload:
     print(f"Uploaded {filepath}")
 ```
 
+## Re-uploading files
+
+If you upload a file with the same `match_id` and `filename` as an existing one, the old file is automatically replaced (deleted from DB and disk). This means you can safely re-run upload scripts without creating duplicates.
+
 ## Required metadata
 
 | Key        | Required | Description                                  |
