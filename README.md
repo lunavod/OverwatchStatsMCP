@@ -15,6 +15,7 @@ An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server for t
 - **Player history** — Look up any match and see which players you've encountered before, with their past performance and perspective-adjusted results
 - **Lobby rankings** — See how you rank within each lobby across all stat categories, with percentile calculations
 - **Duration analysis** — Win rates and performance bucketed by match length
+- **File attachments** — Attach large files (recordings, metadata) to matches via [tus](https://tus.io/) resumable uploads, with automatic storage limit enforcement
 
 ## Requirements
 
@@ -95,6 +96,16 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 ```
+
+### File Attachments (tusd)
+
+Large files (recordings, metadata) can be attached to matches via [tus](https://tus.io/) resumable uploads. This requires a separate [tusd](https://github.com/tus/tusd) server instance. See [`docs/tusd-setup.md`](docs/tusd-setup.md) for server setup and [`docs/client-upload.md`](docs/client-upload.md) for client integration.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TUSD_AUTH_KEY` | *(empty)* | Bearer token clients must send for uploads |
+| `TUSD_DATA_DIR` | `/srv/tusd-data` | Directory where tusd stores uploaded files |
+| `MAX_STORED_MATCHES` | `0` (unlimited) | Max matches with files; oldest are purged when exceeded |
 
 ## Connecting to an MCP Client
 
@@ -298,9 +309,21 @@ Get the note for a player by username. Returns `null` if no note exists.
 
 List all player notes.
 
+### `list_match_files`
+
+List all files attached to a match.
+
+**Parameters:** `match_id` (string)
+
+### `delete_match_file`
+
+Delete a file attached to a match (removes from DB and disk).
+
+**Parameters:** `file_id` (string)
+
 ### `delete_match`
 
-Delete a match and all associated data (player stats, hero stats, screenshots) by UUID. Cascading delete.
+Delete a match and all associated data (player stats, hero stats, screenshots, files) by UUID. Cascading delete — also removes attached files from disk.
 
 ## OpenClaw Integration
 
@@ -319,23 +342,25 @@ See [OPENCLAW_SETUP.md](OPENCLAW_SETUP.md) for full configuration details includ
 
 ## Database Schema
 
-Six tables (five with cascading deletes, one standalone):
+Seven tables (six with cascading deletes, one standalone):
 
 ```
 matches
   ├── player_stats
   │     └── hero_stats
   │           └── hero_stat_values
-  └── screenshots
+  ├── screenshots
+  └── match_files
 
 player_notes (standalone, keyed by username)
 ```
 
-- **matches** — Map, mode, queue type, result, duration, notes, is_backfill, rank_min, rank_max, is_wide_match, banned_heroes, initial_team_side, score_progression, scoreboard URLs, timestamps
+- **matches** — Map, mode, queue type, result, duration, notes, is_backfill, rank_min, rank_max, is_wide_match, banned_heroes, initial_team_side, score_progression, has_attachments, scoreboard URLs, timestamps
 - **player_stats** — Per-player per-match: team, role, name, title, hero, 6 stat columns, is_self, in_party, joined_at (seconds from match start), swap_snapshots (cumulative stats at hero swaps)
 - **hero_stats** — Links a player_stat to a hero name (1:N for multi-hero support), with `started_at` timestamps
 - **hero_stat_values** — Arbitrary key-value hero stats (label/value/is_featured)
 - **screenshots** — Screenshot URLs attached to a match
+- **match_files** — Files attached to a match via tus upload (filename, size, tus_id)
 - **player_notes** — Global notes attached to player usernames
 
 Migrations are managed with Alembic. To create a new migration after modifying models:
@@ -377,6 +402,7 @@ tests/
 ├── test_list_matches.py   # Filtering, sorting, pagination (23 tests)
 ├── test_analytics.py      # Stats, heroes, teammates, rankings, duration, history (47 tests)
 ├── test_player_notes.py   # Player notes CRUD and integration (11 tests)
+├── test_match_files.py    # File attachments, tusd hooks, storage limits (20 tests)
 ├── test_screenshots.py    # Screenshot upload and serving (11 tests)
 └── test_webhook.py        # Webhook and agent-CLI notification (34 tests)
 ```
@@ -391,8 +417,10 @@ tests/
 │   ├── db.py                  # Database engine and session factory
 │   ├── scoreboard.py          # Scoreboard PNG image generation
 │   ├── telegram.py            # Telegram bot integration for scoreboard delivery
+│   ├── tusd_hooks.py          # tusd webhook handlers for file upload lifecycle
 │   └── webhook.py             # OpenClaw integration (agent-CLI and webhook modes)
-├── tests/                     # Test suite (223 tests, requires Docker)
+├── docs/                      # Setup guides (tusd, client upload)
+├── tests/                     # Test suite (252 tests, requires Docker)
 ├── alembic/
 │   ├── env.py                 # Async migration environment
 │   └── versions/              # Migration scripts

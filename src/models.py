@@ -28,6 +28,7 @@ class Match(Base):
     banned_heroes: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     initial_team_side: Mapped[str | None] = mapped_column(String, nullable=True)
     score_progression: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    has_attachments: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -36,6 +37,9 @@ class Match(Base):
         back_populates="match", cascade="all, delete-orphan"
     )
     screenshots: Mapped[list["Screenshot"]] = relationship(
+        back_populates="match", cascade="all, delete-orphan"
+    )
+    files: Mapped[list["MatchFile"]] = relationship(
         back_populates="match", cascade="all, delete-orphan"
     )
 
@@ -123,3 +127,20 @@ class Screenshot(Base):
     )
 
     match: Mapped["Match"] = relationship(back_populates="screenshots")
+
+
+class MatchFile(Base):
+    __tablename__ = "match_files"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    match_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("matches.id", ondelete="CASCADE")
+    )
+    filename: Mapped[str] = mapped_column(String)
+    size: Mapped[int] = mapped_column(Integer)
+    tus_id: Mapped[str] = mapped_column(String, unique=True)
+    uploaded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    match: Mapped["Match"] = relationship(back_populates="files")

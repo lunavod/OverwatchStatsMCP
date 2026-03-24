@@ -11,14 +11,15 @@ from pathlib import Path
 
 from sqlalchemy import Float, Integer, String, case, cast, delete, func, select
 from sqlalchemy.orm import aliased, joinedload
-from starlette.routing import Mount
+from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
 import db
 from mcp.server.fastmcp import FastMCP
-from models import HeroStat, HeroStatValue, Match, PlayerNote, PlayerStat, Screenshot
+from models import HeroStat, HeroStatValue, Match, MatchFile, PlayerNote, PlayerStat, Screenshot
 from scoreboard import render_scoreboard
 from telegram import send_scoreboard as send_telegram_scoreboard, is_configured as telegram_configured
+from tusd_hooks import tusd_hook
 from webhook import fire_webhook
 
 UPLOADS_DIR = Path(os.getenv("UPLOADS_DIR", "uploads"))
@@ -29,6 +30,11 @@ mcp = FastMCP("OverwatchStats", json_response=True)
 # Mount static file serving for uploaded screenshots
 mcp._custom_starlette_routes.append(
     Mount("/uploads", app=StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
+)
+
+# Mount tusd webhook endpoint
+mcp._custom_starlette_routes.append(
+    Route("/tusd-hook", tusd_hook, methods=["POST"])
 )
 
 # ---------------------------------------------------------------------------
@@ -1906,6 +1912,87 @@ async def upload_screenshot(
     return {"url": path}
 
 
+# ---------------------------------------------------------------------------
+# Match files
+# ---------------------------------------------------------------------------
+
+TUSD_DATA_DIR = Path(os.getenv("TUSD_DATA_DIR", "/srv/tusd-data"))
+
+
+@mcp.tool()
+async def list_match_files(match_id: str) -> dict:
+    """List all files attached to a match.
+
+    Parameters:
+        match_id: UUID of the match
+    """
+    async with db.async_session() as session:
+        stmt = (
+            select(MatchFile)
+            .where(MatchFile.match_id == uuid.UUID(match_id))
+            .order_by(MatchFile.uploaded_at)
+        )
+        rows = (await session.execute(stmt)).scalars().all()
+
+    return {
+        "match_id": match_id,
+        "files": [
+            {
+                "id": str(f.id),
+                "filename": f.filename,
+                "size": f.size,
+                "tus_id": f.tus_id,
+                "uploaded_at": f.uploaded_at.isoformat() if f.uploaded_at else None,
+            }
+            for f in rows
+        ],
+    }
+
+
+@mcp.tool()
+async def delete_match_file(file_id: str) -> dict:
+    """Delete a file attached to a match (removes from DB and disk).
+
+    Parameters:
+        file_id: UUID of the file to delete
+    """
+    async with db.async_session() as session:
+        async with session.begin():
+            stmt = select(MatchFile).where(MatchFile.id == uuid.UUID(file_id))
+            mf = (await session.execute(stmt)).scalar_one_or_none()
+            if not mf:
+                return {"error": "File not found"}
+            tus_id = mf.tus_id
+            match_id = mf.match_id
+            await session.delete(mf)
+
+            # Clear has_attachments if this was the last file
+            remaining = (
+                await session.execute(
+                    select(func.count(MatchFile.id)).where(
+                        MatchFile.match_id == match_id,
+                        MatchFile.id != uuid.UUID(file_id),
+                    )
+                )
+            ).scalar_one()
+            if remaining == 0:
+                match = (
+                    await session.execute(
+                        select(Match).where(Match.id == match_id)
+                    )
+                ).scalar_one()
+                match.has_attachments = False
+
+    # Remove from disk
+    for path in [TUSD_DATA_DIR / tus_id, TUSD_DATA_DIR / f"{tus_id}.info"]:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    return {"deleted": True}
+
+
 @mcp.tool()
 async def delete_match(match_id: str) -> dict:
     """Delete a match and all associated data by ID.
@@ -1913,10 +2000,31 @@ async def delete_match(match_id: str) -> dict:
     Parameters:
         match_id: UUID of the match to delete
     """
+    match_uuid = uuid.UUID(match_id)
+
+    # Collect file tus_ids before deleting so we can clean up disk
+    async with db.async_session() as session:
+        tus_ids = [
+            row[0]
+            for row in (
+                await session.execute(
+                    select(MatchFile.tus_id).where(MatchFile.match_id == match_uuid)
+                )
+            ).all()
+        ]
+
     async with db.async_session() as session:
         async with session.begin():
-            stmt = delete(Match).where(Match.id == uuid.UUID(match_id))
+            stmt = delete(Match).where(Match.id == match_uuid)
             result = await session.execute(stmt)
+
+    # Clean up files from disk
+    for tus_id in tus_ids:
+        for path in [TUSD_DATA_DIR / tus_id, TUSD_DATA_DIR / f"{tus_id}.info"]:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     return {"deleted": result.rowcount > 0}
 
