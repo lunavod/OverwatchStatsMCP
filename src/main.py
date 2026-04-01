@@ -16,7 +16,7 @@ from starlette.staticfiles import StaticFiles
 
 import db
 from mcp.server.fastmcp import FastMCP
-from models import HeroStat, HeroStatValue, Match, MatchFile, PlayerNote, PlayerStat, Screenshot
+from models import HeroStat, HeroStatValue, Match, MatchFile, PlayerNote, PlayerStat, RankUpdate, Screenshot
 from scoreboard import render_scoreboard
 from telegram import send_scoreboard as send_telegram_scoreboard, is_configured as telegram_configured
 from tusd_hooks import tusd_hook
@@ -75,6 +75,8 @@ def normalize_map_name(raw: str) -> str | None:
     if not cleaned:
         return None
     lower = cleaned.lower()
+    if lower == "unknown":
+        return "UNKNOWN"
     if lower in _MAP_LOOKUP:
         return _MAP_LOOKUP[lower]
     matches = difflib.get_close_matches(lower, _MAP_LOOKUP.keys(), n=1, cutoff=0.6)
@@ -242,6 +244,7 @@ async def submit_match(
     banned_heroes: list[str] | None = None,
     initial_team_side: str | None = None,
     score_progression: list[str] | None = None,
+    rank_update: dict | None = None,
 ) -> dict:
     """Submit a completed Overwatch match with all player stats.
 
@@ -274,6 +277,9 @@ async def submit_match(
         banned_heroes: Optional list of banned hero names (case-insensitive, fuzzy-matched)
         initial_team_side: Optional initial side — ATTACK or DEFEND
         score_progression: Optional array of round scores as "X:Y" strings (e.g. ["1:0", "1:1", "2:1"])
+        rank_update: Optional rank update after the match, with keys:
+            rank (string, e.g. "GOLD"), division (int 1-5), progress_pct (int 0-100),
+            delta_pct (int, signed), demotion_protection (bool), modifiers (array of strings)
     """
     # --- Validate & normalize map name ---
     normalized_map = normalize_map_name(map_name)
@@ -389,6 +395,17 @@ async def submit_match(
             for upload in screenshot_uploads or []:
                 path = _save_screenshot(upload["data"], upload.get("filename"))
                 session.add(Screenshot(match=match, url=path))
+
+            if rank_update:
+                session.add(RankUpdate(
+                    match=match,
+                    rank=rank_update["rank"].upper(),
+                    division=rank_update["division"],
+                    progress_pct=rank_update["progress_pct"],
+                    delta_pct=rank_update["delta_pct"],
+                    demotion_protection=rank_update.get("demotion_protection", False),
+                    modifiers=rank_update.get("modifiers"),
+                ))
 
     match_id_str = str(match.id)
     match_result = {"match_id": match_id_str}
@@ -557,6 +574,7 @@ async def get_match(match_id: str) -> dict:
                 .joinedload(PlayerStat.hero_stats)
                 .joinedload(HeroStat.values),
                 joinedload(Match.screenshots),
+                joinedload(Match.rank_update),
             )
         )
         result = await session.execute(stmt)
@@ -569,6 +587,18 @@ async def get_match(match_id: str) -> dict:
         notes_map = await _fetch_player_notes(session, player_names)
 
     match_duration_secs = _parse_duration_seconds(match.duration)
+
+    rank_update_out = None
+    if match.rank_update:
+        ru = match.rank_update
+        rank_update_out = {
+            "rank": ru.rank,
+            "division": ru.division,
+            "progress_pct": ru.progress_pct,
+            "delta_pct": ru.delta_pct,
+            "demotion_protection": ru.demotion_protection,
+            "modifiers": ru.modifiers,
+        }
 
     return {
         "id": str(match.id),
@@ -591,6 +621,7 @@ async def get_match(match_id: str) -> dict:
         "initial_team_side": match.initial_team_side,
         "score_progression": match.score_progression,
         "final_score": match.score_progression[-1] if match.score_progression else None,
+        "rank_update": rank_update_out,
         "screenshots": [s.url for s in match.screenshots],
         "player_stats": [
             {
@@ -627,6 +658,7 @@ async def list_matches(
     to_date: str | None = None,
     hero_name: str | None = None,
     player_name: str | None = None,
+    rank: str | None = None,
     sort_by: str | None = None,
     sort_order: str = "desc",
     limit: int = 20,
@@ -643,6 +675,7 @@ async def list_matches(
         to_date: ISO 8601 — only matches on or before this date
         hero_name: Filter to matches where self-player played this hero (case-insensitive)
         player_name: Filter to matches containing this player (case-insensitive, any team)
+        rank: Filter to matches with this rank in rank_update (e.g. "GOLD", case-insensitive)
         sort_by: Sort by a stat: eliminations, assists, deaths, damage, healing, mitigation
         sort_order: "asc" or "desc" (default "desc")
         limit: Max results (default 20, max 100)
@@ -682,6 +715,13 @@ async def list_matches(
                 .where(func.lower(PlayerStat.player_name) == player_name.lower())
             )
             base = base.where(Match.id.in_(player_sub))
+
+        if rank:
+            rank_sub = (
+                select(RankUpdate.match_id)
+                .where(func.upper(RankUpdate.rank) == rank.upper())
+            )
+            base = base.where(Match.id.in_(rank_sub))
 
         # B1: sort_by stat
         _SORTABLE = {
@@ -1686,6 +1726,7 @@ async def edit_match(
     banned_heroes: list[str] | None = None,
     initial_team_side: str | None = None,
     score_progression: list[str] | None = None,
+    rank_update: dict | None = None,
 ) -> dict:
     """Edit an existing match's metadata. Only provided fields are updated.
 
@@ -1706,6 +1747,9 @@ async def edit_match(
         banned_heroes: New list of banned hero names (pass empty list to clear)
         initial_team_side: New initial side — ATTACK or DEFEND (pass empty string to clear)
         score_progression: New score progression as array of "X:Y" strings (pass empty list to clear)
+        rank_update: New rank update dict (pass empty dict {} to remove). Keys:
+            rank (string, e.g. "GOLD"), division (int 1-5), progress_pct (int 0-100),
+            delta_pct (int, signed), demotion_protection (bool), modifiers (array of strings)
         screenshots_to_add: List of screenshot URLs to attach
         screenshot_uploads: List of base64 image uploads, each with keys:
             data (base64-encoded image bytes), filename (optional, used for extension detection)
@@ -1769,6 +1813,8 @@ async def edit_match(
     async with db.async_session() as session:
         async with session.begin():
             load_options = [joinedload(Match.screenshots)]
+            if rank_update is not None:
+                load_options.append(joinedload(Match.rank_update))
             if player_edits:
                 load_options.append(
                     joinedload(Match.player_stats)
@@ -1827,6 +1873,31 @@ async def edit_match(
             for upload in screenshot_uploads or []:
                 path = _save_screenshot(upload["data"], upload.get("filename"))
                 session.add(Screenshot(match=match, url=path))
+
+            if rank_update is not None:
+                if rank_update:
+                    # Set or replace rank update
+                    if match.rank_update:
+                        match.rank_update.rank = rank_update["rank"].upper()
+                        match.rank_update.division = rank_update["division"]
+                        match.rank_update.progress_pct = rank_update["progress_pct"]
+                        match.rank_update.delta_pct = rank_update["delta_pct"]
+                        match.rank_update.demotion_protection = rank_update.get("demotion_protection", False)
+                        match.rank_update.modifiers = rank_update.get("modifiers")
+                    else:
+                        session.add(RankUpdate(
+                            match=match,
+                            rank=rank_update["rank"].upper(),
+                            division=rank_update["division"],
+                            progress_pct=rank_update["progress_pct"],
+                            delta_pct=rank_update["delta_pct"],
+                            demotion_protection=rank_update.get("demotion_protection", False),
+                            modifiers=rank_update.get("modifiers"),
+                        ))
+                else:
+                    # Empty dict = remove rank update
+                    if match.rank_update:
+                        await session.delete(match.rank_update)
 
             if player_edits:
                 ps_by_id = {str(ps.id): ps for ps in match.player_stats}

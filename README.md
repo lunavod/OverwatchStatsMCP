@@ -4,7 +4,7 @@ An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server for t
 
 ## Features
 
-- **Match tracking** — Record complete 10-player lobbies with per-player stats, multi-hero timelines, swap performance snapshots, banned heroes, notes, screenshots, and rank range metadata
+- **Match tracking** — Record complete 10-player lobbies with per-player stats, multi-hero timelines, swap performance snapshots, banned heroes, notes, screenshots, rank range metadata, and post-match rank updates
 - **Scoreboard generation** — Automatically generates scoreboard PNG images on match submission, with optional Telegram delivery
 - **Flexible querying** — Filter and sort matches by map, mode, queue type, hero, date range, and stats
 - **Match editing** — Update match metadata, player data (names, titles, stats, heroes), and manage screenshots after submission
@@ -156,6 +156,18 @@ Record a completed match with all player stats.
 | `banned_heroes`  | string[] | No     | List of banned hero names — fuzzy-matched to `heroes.txt` |
 | `initial_team_side` | string | No    | Initial side — `ATTACK` or `DEFEND`                      |
 | `score_progression` | string[] | No  | Round scores as `"X:Y"` strings (e.g. `["1:0", "1:1", "2:1"]`) |
+| `rank_update` | object | No | Rank update after the match (see below) |
+
+**Rank update object:**
+
+| Key                   | Type     | Required | Description                              |
+|-----------------------|----------|----------|------------------------------------------|
+| `rank`                | string   | Yes      | Rank tier (e.g. `"GOLD"`, `"PLATINUM"`)  |
+| `division`            | int      | Yes      | Division within rank (1–5)               |
+| `progress_pct`        | int      | Yes      | Progress within division (0–100)         |
+| `delta_pct`           | int      | Yes      | Progress change (signed, e.g. +27 or -15)|
+| `demotion_protection` | bool     | No       | Whether demotion protection is active (default false) |
+| `modifiers`           | string[] | No       | Match modifiers (e.g. `["VICTORY", "UPHILL BATTLE"]`) |
 
 **Player object:**
 
@@ -182,7 +194,7 @@ Record a completed match with all player stats.
 
 ### `get_match`
 
-Retrieve full details for a match by UUID, including all player stats, hero stat values, multi-hero timelines (with computed `primary_hero`, `starting_hero`, `ending_hero`), banned heroes, rank range, notes, backfill flag, and screenshot URLs. When `swap_snapshots` are present on a player, computed `hero_segments` are included with pre-calculated per-segment stat deltas (eliminations, damage, etc. per hero play period).
+Retrieve full details for a match by UUID, including all player stats, hero stat values, multi-hero timelines (with computed `primary_hero`, `starting_hero`, `ending_hero`), banned heroes, rank range, rank update, notes, backfill flag, and screenshot URLs. When `swap_snapshots` are present on a player, computed `hero_segments` are included with pre-calculated per-segment stat deltas (eliminations, damage, etc. per hero play period).
 
 ### `edit_match`
 
@@ -212,6 +224,7 @@ Edit an existing match's metadata. Only provided fields are updated.
 | `banned_heroes`        | string[] | No       | New list of banned heroes (empty list to clear) |
 | `initial_team_side`    | string   | No       | New initial side — `ATTACK` or `DEFEND` (empty string to clear) |
 | `score_progression`    | string[] | No       | New score progression (empty list to clear)      |
+| `rank_update`          | object   | No       | New rank update (same format as `submit_match`; pass `{}` to remove) |
 
 **Player edit object:**
 
@@ -239,7 +252,7 @@ Edit an existing match's metadata. Only provided fields are updated.
 
 List matches with filtering, sorting, and pagination.
 
-**Filters:** `map_name`, `mode`, `queue_type`, `result`, `from_date`, `to_date`, `hero_name`, `player_name`
+**Filters:** `map_name`, `mode`, `queue_type`, `result`, `from_date`, `to_date`, `hero_name`, `player_name`, `rank`
 **Sorting:** `sort_by` (any of the 6 stat columns), `sort_order` (`asc`/`desc`)
 **Pagination:** `limit` (default 20, max 100), `offset`
 
@@ -342,7 +355,7 @@ See [OPENCLAW_SETUP.md](OPENCLAW_SETUP.md) for full configuration details includ
 
 ## Database Schema
 
-Seven tables (six with cascading deletes, one standalone):
+Eight tables (seven with cascading deletes, one standalone):
 
 ```
 matches
@@ -350,7 +363,8 @@ matches
   │     └── hero_stats
   │           └── hero_stat_values
   ├── screenshots
-  └── match_files
+  ├── match_files
+  └── rank_updates (1:1)
 
 player_notes (standalone, keyed by username)
 ```
@@ -361,6 +375,7 @@ player_notes (standalone, keyed by username)
 - **hero_stat_values** — Arbitrary key-value hero stats (label/value/is_featured)
 - **screenshots** — Screenshot URLs attached to a match
 - **match_files** — Files attached to a match via tus upload (filename, size, tus_id)
+- **rank_updates** — Post-match rank update (1:1 with match): rank tier, division, progress %, delta %, demotion protection, modifiers
 - **player_notes** — Global notes attached to player usernames
 
 Migrations are managed with Alembic. To create a new migration after modifying models:
@@ -398,8 +413,8 @@ uv run pytest -k "test_filter"             # keyword match
 tests/
 ├── conftest.py            # Testcontainers setup, DB override, per-test cleanup
 ├── factories.py           # Test data helpers (make_players, create_test_match)
-├── test_match_crud.py     # Submit, get, edit, delete (98 tests)
-├── test_list_matches.py   # Filtering, sorting, pagination (23 tests)
+├── test_match_crud.py     # Submit, get, edit, delete (108 tests)
+├── test_list_matches.py   # Filtering, sorting, pagination (25 tests)
 ├── test_analytics.py      # Stats, heroes, teammates, rankings, duration, history (47 tests)
 ├── test_player_notes.py   # Player notes CRUD and integration (11 tests)
 ├── test_match_files.py    # File attachments, tusd hooks, storage limits (20 tests)
@@ -420,7 +435,7 @@ tests/
 │   ├── tusd_hooks.py          # tusd webhook handlers for file upload lifecycle
 │   └── webhook.py             # OpenClaw integration (agent-CLI and webhook modes)
 ├── docs/                      # Setup guides (tusd, client upload)
-├── tests/                     # Test suite (252 tests, requires Docker)
+├── tests/                     # Test suite (267 tests, requires Docker)
 ├── alembic/
 │   ├── env.py                 # Async migration environment
 │   └── versions/              # Migration scripts

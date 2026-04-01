@@ -224,6 +224,33 @@ class TestListMatchesFilters:
         result = await list_matches(player_name="Enemy1")
         assert result["total"] > 0
 
+    async def test_filter_by_rank(self):
+        from main import list_matches
+
+        from tests.factories import create_test_match
+
+        await create_test_match(rank_update={
+            "rank": "GOLD", "division": 3, "progress_pct": 50, "delta_pct": 20,
+        })
+        await create_test_match(rank_update={
+            "rank": "PLATINUM", "division": 1, "progress_pct": 10, "delta_pct": -5,
+        })
+        await create_test_match()  # no rank_update
+
+        result = await list_matches(rank="GOLD")
+        assert result["total"] == 1
+
+    async def test_filter_by_rank_case_insensitive(self):
+        from main import list_matches
+
+        from tests.factories import create_test_match
+
+        await create_test_match(rank_update={
+            "rank": "GOLD", "division": 3, "progress_pct": 50, "delta_pct": 20,
+        })
+        result = await list_matches(rank="gold")
+        assert result["total"] == 1
+
 
 # ---------------------------------------------------------------------------
 # Sorting

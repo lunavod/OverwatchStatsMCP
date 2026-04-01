@@ -32,6 +32,44 @@ class TestStripBattletag:
 
 
 # ---------------------------------------------------------------------------
+# normalize_map_name
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizeMapName:
+    def test_exact_match(self):
+        from main import normalize_map_name
+
+        assert normalize_map_name("Lijiang Tower") == "Lijiang Tower"
+
+    def test_fuzzy_match(self):
+        from main import normalize_map_name
+
+        assert normalize_map_name("Lijang Tower") == "Lijiang Tower"
+
+    def test_unknown_stays_unknown(self):
+        from main import normalize_map_name
+
+        assert normalize_map_name("UNKNOWN") == "UNKNOWN"
+
+    def test_unknown_case_insensitive(self):
+        from main import normalize_map_name
+
+        assert normalize_map_name("unknown") == "UNKNOWN"
+        assert normalize_map_name("Unknown") == "UNKNOWN"
+
+    def test_invalid_returns_none(self):
+        from main import normalize_map_name
+
+        assert normalize_map_name("NotARealMap12345") is None
+
+    def test_empty_returns_none(self):
+        from main import normalize_map_name
+
+        assert normalize_map_name("") is None
+
+
+# ---------------------------------------------------------------------------
 # submit_match
 # ---------------------------------------------------------------------------
 
@@ -538,6 +576,47 @@ class TestSubmitMatch:
         assert "error" in result
         assert "hero name" in result["error"].lower()
 
+    async def test_submit_with_rank_update(self):
+        from main import get_match
+
+        rank_update = {
+            "rank": "GOLD",
+            "division": 3,
+            "progress_pct": 24,
+            "delta_pct": 27,
+            "demotion_protection": True,
+            "modifiers": ["VICTORY", "UPHILL BATTLE"],
+        }
+        match_id = await create_test_match(rank_update=rank_update)
+        match = await get_match(match_id)
+        ru = match["rank_update"]
+        assert ru is not None
+        assert ru["rank"] == "GOLD"
+        assert ru["division"] == 3
+        assert ru["progress_pct"] == 24
+        assert ru["delta_pct"] == 27
+        assert ru["demotion_protection"] is True
+        assert ru["modifiers"] == ["VICTORY", "UPHILL BATTLE"]
+
+    async def test_submit_without_rank_update(self):
+        from main import get_match
+
+        match_id = await create_test_match()
+        match = await get_match(match_id)
+        assert match["rank_update"] is None
+
+    async def test_submit_rank_update_normalizes_rank_case(self):
+        from main import get_match
+
+        match_id = await create_test_match(rank_update={
+            "rank": "gold",
+            "division": 1,
+            "progress_pct": 50,
+            "delta_pct": -10,
+        })
+        match = await get_match(match_id)
+        assert match["rank_update"]["rank"] == "GOLD"
+
 
 # ---------------------------------------------------------------------------
 # get_match
@@ -579,6 +658,7 @@ class TestGetMatch:
             "initial_team_side",
             "score_progression",
             "final_score",
+            "rank_update",
             "screenshots",
             "player_stats",
         }
@@ -1124,6 +1204,56 @@ class TestEditMatch:
         updated = next(p for p in match["player_stats"] if p["id"] == self_player["id"])
         assert "swap_snapshots" not in updated
 
+    async def test_add_rank_update(self):
+        from main import edit_match, get_match
+
+        match_id = await create_test_match()
+        await edit_match(match_id, rank_update={
+            "rank": "PLATINUM",
+            "division": 2,
+            "progress_pct": 80,
+            "delta_pct": 15,
+            "demotion_protection": False,
+            "modifiers": ["VICTORY"],
+        })
+        match = await get_match(match_id)
+        assert match["rank_update"]["rank"] == "PLATINUM"
+        assert match["rank_update"]["division"] == 2
+
+    async def test_update_existing_rank_update(self):
+        from main import edit_match, get_match
+
+        match_id = await create_test_match(rank_update={
+            "rank": "GOLD",
+            "division": 3,
+            "progress_pct": 24,
+            "delta_pct": 27,
+        })
+        await edit_match(match_id, rank_update={
+            "rank": "PLATINUM",
+            "division": 5,
+            "progress_pct": 10,
+            "delta_pct": 86,
+        })
+        match = await get_match(match_id)
+        assert match["rank_update"]["rank"] == "PLATINUM"
+        assert match["rank_update"]["division"] == 5
+        assert match["rank_update"]["progress_pct"] == 10
+        assert match["rank_update"]["delta_pct"] == 86
+
+    async def test_remove_rank_update(self):
+        from main import edit_match, get_match
+
+        match_id = await create_test_match(rank_update={
+            "rank": "GOLD",
+            "division": 3,
+            "progress_pct": 24,
+            "delta_pct": 27,
+        })
+        await edit_match(match_id, rank_update={})
+        match = await get_match(match_id)
+        assert match["rank_update"] is None
+
 
 # ---------------------------------------------------------------------------
 # delete_match
@@ -1203,3 +1333,25 @@ class TestDeleteMatch:
             ).scalar_one()
         assert hs_count == 0
         assert hsv_count == 0
+
+    async def test_cascade_deletes_rank_update(self):
+        from sqlalchemy import func, select
+
+        from main import delete_match
+        from models import RankUpdate
+
+        match_id = await create_test_match(rank_update={
+            "rank": "GOLD",
+            "division": 3,
+            "progress_pct": 24,
+            "delta_pct": 27,
+        })
+        await delete_match(match_id)
+
+        async with db.async_session() as session:
+            count = (
+                await session.execute(
+                    select(func.count()).select_from(RankUpdate)
+                )
+            ).scalar_one()
+        assert count == 0

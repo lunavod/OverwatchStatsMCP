@@ -42,6 +42,9 @@ class Match(Base):
     files: Mapped[list["MatchFile"]] = relationship(
         back_populates="match", cascade="all, delete-orphan"
     )
+    rank_update: Mapped["RankUpdate | None"] = relationship(
+        back_populates="match", cascade="all, delete-orphan", uselist=False
+    )
 
 
 class PlayerStat(Base):
@@ -101,6 +104,23 @@ class HeroStatValue(Base):
     is_featured: Mapped[bool] = mapped_column(Boolean, default=False)
 
     hero_stat: Mapped["HeroStat"] = relationship(back_populates="values")
+
+
+class RankUpdate(Base):
+    __tablename__ = "rank_updates"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    match_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("matches.id", ondelete="CASCADE"), unique=True
+    )
+    rank: Mapped[str] = mapped_column(String)
+    division: Mapped[int] = mapped_column(Integer)
+    progress_pct: Mapped[int] = mapped_column(Integer)
+    delta_pct: Mapped[int] = mapped_column(Integer)
+    demotion_protection: Mapped[bool] = mapped_column(Boolean, default=False)
+    modifiers: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+
+    match: Mapped["Match"] = relationship(back_populates="rank_update")
 
 
 class PlayerNote(Base):
