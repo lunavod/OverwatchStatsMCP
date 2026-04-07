@@ -1,4 +1,3 @@
-import asyncio
 import base64
 import difflib
 import logging
@@ -16,16 +15,59 @@ from starlette.staticfiles import StaticFiles
 
 import db
 from mcp.server.fastmcp import FastMCP
+from mcp.server.auth.middleware.auth_context import get_access_token
+from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
 from models import HeroStat, HeroStatValue, Match, MatchFile, PlayerNote, PlayerStat, RankUpdate, Screenshot
 from scoreboard import render_scoreboard
-from telegram import send_scoreboard as send_telegram_scoreboard, is_configured as telegram_configured
 from tusd_hooks import tusd_hook
-from webhook import fire_webhook
+from admin import (
+    admin_delete_user,
+    admin_disable_user,
+    admin_login,
+    admin_set_quota,
+    admin_toggle_admin,
+    admin_users,
+)
+from auth import OwAuthProvider, google_callback, EXTERNAL_URL
+
+
+def current_user_id() -> uuid.UUID:
+    """Get the authenticated user's ID from the MCP auth context."""
+    token = get_access_token()
+    if token is None:
+        raise RuntimeError("No authenticated user")
+    return token.user_id
+
+
+def current_user_is_admin() -> bool:
+    """Check if the authenticated user is an admin."""
+    token = get_access_token()
+    if token is None:
+        return False
+    return token.is_admin
 
 UPLOADS_DIR = Path(os.getenv("UPLOADS_DIR", "uploads"))
 UPLOADS_DIR.mkdir(exist_ok=True)
 
-mcp = FastMCP("OverwatchStats", json_response=True)
+# Auth configuration — disabled when GOOGLE_CLIENT_ID is not set
+_google_client_id = os.getenv("GOOGLE_CLIENT_ID", "")
+_auth_settings = None
+_auth_provider = None
+
+if _google_client_id:
+    _auth_settings = AuthSettings(
+        issuer_url=EXTERNAL_URL,
+        resource_server_url=EXTERNAL_URL,
+        client_registration_options=ClientRegistrationOptions(enabled=True),
+    )
+    _auth_provider = OwAuthProvider()
+
+mcp = FastMCP(
+    "OverwatchStats",
+    json_response=True,
+    auth=_auth_settings,
+    auth_server_provider=_auth_provider,
+)
 
 # Mount static file serving for uploaded screenshots
 mcp._custom_starlette_routes.append(
@@ -36,6 +78,21 @@ mcp._custom_starlette_routes.append(
 mcp._custom_starlette_routes.append(
     Route("/tusd-hook", tusd_hook, methods=["POST"])
 )
+
+# Mount Google OAuth callback
+mcp._custom_starlette_routes.append(
+    Route("/auth/google/callback", google_callback, methods=["GET"])
+)
+
+# Mount admin panel
+mcp._custom_starlette_routes.extend([
+    Route("/admin/login", admin_login, methods=["GET", "POST"]),
+    Route("/admin/", admin_users, methods=["GET"]),
+    Route("/admin/users/{user_id}/toggle-admin", admin_toggle_admin, methods=["POST"]),
+    Route("/admin/users/{user_id}/disable", admin_disable_user, methods=["POST"]),
+    Route("/admin/users/{user_id}/delete", admin_delete_user, methods=["POST"]),
+    Route("/admin/users/{user_id}/quota", admin_set_quota, methods=["POST"]),
+])
 
 # ---------------------------------------------------------------------------
 # Name validation lists (loaded once at import)
@@ -322,9 +379,12 @@ async def submit_match(
         if ban_errors:
             return {"error": f"Unknown banned hero name(s): {', '.join(repr(e) for e in ban_errors)}"}
 
+    uid = current_user_id()
+
     async with db.async_session() as session:
         async with session.begin():
             match = Match(
+                user_id=uid,
                 map_name=map_name,
                 duration=duration,
                 mode=mode.upper(),
@@ -434,25 +494,8 @@ async def submit_match(
             match_result["scoreboard_url"] = scoreboard_url
             if hero_stats_url:
                 match_result["hero_stats_url"] = hero_stats_url
-
-            # Send to Telegram (fire and forget)
-            if telegram_configured():
-                asyncio.create_task(send_telegram_scoreboard(outputs))
     except Exception:
         logging.getLogger(__name__).exception("Scoreboard generation failed")
-
-    await fire_webhook({
-        **match_result,
-        "map_name": map_name,
-        "duration": duration,
-        "mode": mode.upper(),
-        "queue_type": queue_type.upper(),
-        "result": result.upper(),
-        "played_at": played_at,
-        "notes": notes,
-        "is_backfill": is_backfill,
-        "source": source,
-    })
 
     return match_result
 
@@ -565,10 +608,13 @@ async def get_match(match_id: str) -> dict:
     Parameters:
         match_id: UUID of the match
     """
+    uid = current_user_id()
+
     async with db.async_session() as session:
         stmt = (
             select(Match)
             .where(Match.id == uuid.UUID(match_id))
+            .where(Match.user_id == uid)
             .options(
                 joinedload(Match.player_stats)
                 .joinedload(PlayerStat.hero_stats)
@@ -584,7 +630,7 @@ async def get_match(match_id: str) -> dict:
             return {"error": "Match not found"}
 
         player_names = [ps.player_name for ps in match.player_stats]
-        notes_map = await _fetch_player_notes(session, player_names)
+        notes_map = await _fetch_player_notes(session, player_names, uid)
 
     match_duration_secs = _parse_duration_seconds(match.duration)
 
@@ -682,9 +728,10 @@ async def list_matches(
         offset: Pagination offset (default 0)
     """
     limit = min(limit, 100)
+    uid = current_user_id()
 
     async with db.async_session() as session:
-        base = select(Match)
+        base = select(Match).where(Match.user_id == uid)
 
         if map_name:
             base = base.where(func.lower(Match.map_name) == map_name.lower())
@@ -848,6 +895,8 @@ async def get_stats_summary(
     if group_by_2 and not group_by:
         return {"error": "group_by_2 requires group_by to be set"}
 
+    uid = current_user_id()
+
     async with db.async_session() as session:
         # Resolve group columns
         group_col, needs_hero_1, is_time_1 = _resolve_group_col(group_by) if group_by else (None, False, False)
@@ -879,6 +928,7 @@ async def get_stats_summary(
             stmt = stmt.join(HeroStat)
 
         stmt = stmt.where(PlayerStat.is_self == True)  # noqa: E712
+        stmt = stmt.where(Match.user_id == uid)
 
         # Filter out NULL played_at when using time-based grouping
         if is_time_based:
@@ -901,6 +951,7 @@ async def get_stats_summary(
                 .select_from(PlayerStat)
                 .join(Match)
                 .where(PlayerStat.is_self == True)  # noqa: E712
+                .where(Match.user_id == uid)
             )
             if is_time_based:
                 recent_sub = recent_sub.where(Match.played_at.isnot(None))
@@ -994,6 +1045,7 @@ async def get_hero_detail_stats(
         to_date: ISO 8601 — only matches on or before this date
     """
     numeric_val = _safe_float_cast()
+    uid = current_user_id()
 
     async with db.async_session() as session:
         # CTE: parse values first, then aggregate (avoids PG CASE eval issues in aggs)
@@ -1010,6 +1062,7 @@ async def get_hero_detail_stats(
             .join(PlayerStat)
             .join(Match)
             .where(PlayerStat.is_self == True)  # noqa: E712
+            .where(Match.user_id == uid)
         )
 
         parsed = _apply_match_filters(parsed, queue_type, from_date, to_date)
@@ -1077,6 +1130,7 @@ async def get_hero_stat_series(
         to_date: ISO 8601 — only matches on or before this date
     """
     numeric_val = _safe_float_cast()
+    uid = current_user_id()
 
     async with db.async_session() as session:
         stmt = (
@@ -1096,6 +1150,7 @@ async def get_hero_stat_series(
             .join(PlayerStat)
             .join(Match)
             .where(PlayerStat.is_self == True)  # noqa: E712
+            .where(Match.user_id == uid)
             .where(func.lower(HeroStat.hero_name) == hero_name.lower())
             .where(func.lower(HeroStatValue.label) == label.lower())
         )
@@ -1162,6 +1217,7 @@ async def get_teammate_stats(
         min_games: Minimum games together to include (default 1)
         limit: Max teammates to return (default 50)
     """
+    uid = current_user_id()
     normalized_name = func.regexp_replace(
         PlayerStat.player_name, r"\s*\([^)]+\)\s*$", "", "g"
     )
@@ -1178,6 +1234,7 @@ async def get_teammate_stats(
             .join(Match)
             .where(PlayerStat.team == "ALLY")
             .where(PlayerStat.is_self == False)  # noqa: E712
+            .where(Match.user_id == uid)
         )
 
         stmt = _apply_match_filters(stmt, queue_type, from_date, to_date)
@@ -1192,7 +1249,7 @@ async def get_teammate_stats(
         rows = (await session.execute(stmt)).all()
 
         player_names = [row.player_name for row in rows]
-        notes_map = await _fetch_player_notes(session, player_names)
+        notes_map = await _fetch_player_notes(session, player_names, uid)
 
     teammates = []
     for row in rows:
@@ -1227,6 +1284,7 @@ async def get_match_player_history(
         match_history: Number of recent past matches to return per player (default 3)
     """
     target_id = uuid.UUID(match_id)
+    uid = current_user_id()
     normalized_name = func.regexp_replace(
         PlayerStat.player_name, r"\s*\([^)]+\)\s*$", "", "g"
     )
@@ -1254,6 +1312,7 @@ async def get_match_player_history(
             .select_from(PlayerStat)
             .join(Match)
             .where(Match.id == target_id)
+            .where(Match.user_id == uid)
             .where(PlayerStat.is_self == False)  # noqa: E712
         )
         rows_q1 = (await session.execute(q1)).all()
@@ -1331,6 +1390,7 @@ async def get_match_player_history(
             .select_from(PlayerStat)
             .join(Match)
             .where(PlayerStat.is_self == False)  # noqa: E712
+            .where(Match.user_id == uid)
             .where(Match.id != target_id)
             .where(
                 func.regexp_replace(
@@ -1348,7 +1408,7 @@ async def get_match_player_history(
         rows_q2 = (await session.execute(outer)).all()
 
         all_player_names = [info["player_name"] for info in player_info.values()]
-        notes_map = await _fetch_player_notes(session, all_player_names)
+        notes_map = await _fetch_player_notes(session, all_player_names, uid)
 
     for info in player_info.values():
         info["player_note"] = notes_map.get(info["player_name"])
@@ -1426,6 +1486,8 @@ async def get_player_history(
     if not player_names:
         return {"players_with_history": [], "players_without_history": []}
 
+    uid = current_user_id()
+
     # Normalize input names the same way DB names are normalized
     normalized_inputs = {
         re.sub(r"\s*\([^)]+\)\s*$", "", name).strip(): name
@@ -1477,6 +1539,7 @@ async def get_player_history(
             .select_from(PlayerStat)
             .join(Match)
             .where(PlayerStat.is_self == False)  # noqa: E712
+            .where(Match.user_id == uid)
             .where(normalized_name_col.in_(name_set))
         ).cte("history")
 
@@ -1489,7 +1552,7 @@ async def get_player_history(
         rows = (await session.execute(outer)).all()
 
         all_raw_names = list(normalized_inputs.values())
-        notes_map = await _fetch_player_notes(session, all_raw_names)
+        notes_map = await _fetch_player_notes(session, all_raw_names, uid)
 
     # Build result
     history_by_name: dict[str, list[dict]] = {}
@@ -1564,6 +1627,7 @@ async def get_match_rankings(
         to_date: ISO 8601 — only matches on or before this date
     """
     stat_names = ["eliminations", "assists", "deaths", "damage", "healing", "mitigation"]
+    uid = current_user_id()
 
     async with db.async_session() as session:
         # Build CTE with window functions for each stat
@@ -1590,6 +1654,7 @@ async def get_match_rankings(
                 *rank_cols,
             )
             .join(Match)
+            .where(Match.user_id == uid)
         )
 
         cte = _apply_match_filters(cte, queue_type, from_date, to_date)
@@ -1649,6 +1714,7 @@ async def get_duration_stats(
     """
     dur_sec = _duration_seconds()
     bucket_expr = (func.floor(dur_sec / bucket_size) * bucket_size)
+    uid = current_user_id()
 
     async with db.async_session() as session:
         stmt = (
@@ -1667,6 +1733,7 @@ async def get_duration_stats(
             .select_from(PlayerStat)
             .join(Match)
             .where(PlayerStat.is_self == True)  # noqa: E712
+            .where(Match.user_id == uid)
             .where(Match.duration.op("~")(r"^\d+:\d+$"))
         )
 
@@ -1810,6 +1877,8 @@ async def edit_match(
         else:
             normalized_banned = []
 
+    uid = current_user_id()
+
     async with db.async_session() as session:
         async with session.begin():
             load_options = [joinedload(Match.screenshots)]
@@ -1824,6 +1893,7 @@ async def edit_match(
             stmt = (
                 select(Match)
                 .where(Match.id == uuid.UUID(match_id))
+                .where(Match.user_id == uid)
                 .options(*load_options)
             )
             match = (await session.execute(stmt)).unique().scalar_one_or_none()
@@ -1971,10 +2041,11 @@ async def upload_screenshot(
         filename: Optional filename hint for extension detection (e.g. "screen.jpg")
     """
     path = _save_screenshot(data, filename)
+    uid = current_user_id()
 
     async with db.async_session() as session:
         async with session.begin():
-            stmt = select(Match).where(Match.id == uuid.UUID(match_id))
+            stmt = select(Match).where(Match.id == uuid.UUID(match_id)).where(Match.user_id == uid)
             match = (await session.execute(stmt)).scalar_one_or_none()
             if not match:
                 return {"error": "Match not found"}
@@ -1997,10 +2068,14 @@ async def list_match_files(match_id: str) -> dict:
     Parameters:
         match_id: UUID of the match
     """
+    uid = current_user_id()
+
     async with db.async_session() as session:
         stmt = (
             select(MatchFile)
+            .join(Match, MatchFile.match_id == Match.id)
             .where(MatchFile.match_id == uuid.UUID(match_id))
+            .where(Match.user_id == uid)
             .order_by(MatchFile.uploaded_at)
         )
         rows = (await session.execute(stmt)).scalars().all()
@@ -2027,9 +2102,16 @@ async def delete_match_file(file_id: str) -> dict:
     Parameters:
         file_id: UUID of the file to delete
     """
+    uid = current_user_id()
+
     async with db.async_session() as session:
         async with session.begin():
-            stmt = select(MatchFile).where(MatchFile.id == uuid.UUID(file_id))
+            stmt = (
+                select(MatchFile)
+                .join(Match, MatchFile.match_id == Match.id)
+                .where(MatchFile.id == uuid.UUID(file_id))
+                .where(Match.user_id == uid)
+            )
             mf = (await session.execute(stmt)).scalar_one_or_none()
             if not mf:
                 return {"error": "File not found"}
@@ -2072,6 +2154,7 @@ async def delete_match(match_id: str) -> dict:
         match_id: UUID of the match to delete
     """
     match_uuid = uuid.UUID(match_id)
+    uid = current_user_id()
 
     # Collect file tus_ids before deleting so we can clean up disk
     async with db.async_session() as session:
@@ -2079,14 +2162,17 @@ async def delete_match(match_id: str) -> dict:
             row[0]
             for row in (
                 await session.execute(
-                    select(MatchFile.tus_id).where(MatchFile.match_id == match_uuid)
+                    select(MatchFile.tus_id)
+                    .join(Match, MatchFile.match_id == Match.id)
+                    .where(MatchFile.match_id == match_uuid)
+                    .where(Match.user_id == uid)
                 )
             ).all()
         ]
 
     async with db.async_session() as session:
         async with session.begin():
-            stmt = delete(Match).where(Match.id == match_uuid)
+            stmt = delete(Match).where(Match.id == match_uuid).where(Match.user_id == uid)
             result = await session.execute(stmt)
 
     # Clean up files from disk
@@ -2105,11 +2191,14 @@ async def delete_match(match_id: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
-async def _fetch_player_notes(session, player_names: list[str]) -> dict[str, str]:
-    """Fetch notes for a list of player names. Returns {name: note} mapping."""
+async def _fetch_player_notes(session, player_names: list[str], user_id: uuid.UUID) -> dict[str, str]:
+    """Fetch notes for a list of player names scoped to a user. Returns {name: note} mapping."""
     if not player_names:
         return {}
-    stmt = select(PlayerNote).where(PlayerNote.player_name.in_(player_names))
+    stmt = select(PlayerNote).where(
+        PlayerNote.player_name.in_(player_names),
+        PlayerNote.user_id == user_id,
+    )
     rows = (await session.execute(stmt)).scalars().all()
     return {r.player_name: r.note for r in rows}
 
@@ -2121,15 +2210,20 @@ async def _fetch_player_notes(session, player_names: list[str]) -> dict[str, str
 
 @mcp.tool()
 async def set_player_note(player_name: str, note: str) -> dict:
-    """Set or update a note for a player. Notes are global, not per-match.
+    """Set or update a note for a player. Notes are per-user, not shared.
 
     Parameters:
         player_name: The player's username (exact match)
         note: The note text (pass empty string to delete the note)
     """
+    uid = current_user_id()
+
     async with db.async_session() as session:
         async with session.begin():
-            stmt = select(PlayerNote).where(PlayerNote.player_name == player_name)
+            stmt = select(PlayerNote).where(
+                PlayerNote.player_name == player_name,
+                PlayerNote.user_id == uid,
+            )
             existing = (await session.execute(stmt)).scalar_one_or_none()
             if not note:
                 if existing:
@@ -2139,7 +2233,7 @@ async def set_player_note(player_name: str, note: str) -> dict:
             if existing:
                 existing.note = note
             else:
-                session.add(PlayerNote(player_name=player_name, note=note))
+                session.add(PlayerNote(user_id=uid, player_name=player_name, note=note))
     return {"player_name": player_name, "note": note}
 
 
@@ -2150,8 +2244,13 @@ async def get_player_note(player_name: str) -> dict:
     Parameters:
         player_name: The player's username (exact match)
     """
+    uid = current_user_id()
+
     async with db.async_session() as session:
-        stmt = select(PlayerNote).where(PlayerNote.player_name == player_name)
+        stmt = select(PlayerNote).where(
+            PlayerNote.player_name == player_name,
+            PlayerNote.user_id == uid,
+        )
         row = (await session.execute(stmt)).scalar_one_or_none()
     if not row:
         return {"player_name": player_name, "note": None}
@@ -2160,9 +2259,11 @@ async def get_player_note(player_name: str) -> dict:
 
 @mcp.tool()
 async def list_player_notes() -> dict:
-    """List all player notes."""
+    """List all player notes for the current user."""
+    uid = current_user_id()
+
     async with db.async_session() as session:
-        stmt = select(PlayerNote).order_by(PlayerNote.player_name)
+        stmt = select(PlayerNote).where(PlayerNote.user_id == uid).order_by(PlayerNote.player_name)
         rows = (await session.execute(stmt)).scalars().all()
     return {
         "notes": [

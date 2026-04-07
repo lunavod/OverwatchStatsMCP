@@ -4,11 +4,12 @@ An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server for t
 
 ## Features
 
+- **Multi-user** — Google OAuth authentication with per-user data isolation; admin panel for user management
 - **Match tracking** — Record complete 10-player lobbies with per-player stats, multi-hero timelines, swap performance snapshots, banned heroes, notes, screenshots, rank range metadata, and post-match rank updates
-- **Scoreboard generation** — Automatically generates scoreboard PNG images on match submission, with optional Telegram delivery
+- **Scoreboard generation** — Automatically generates scoreboard PNG images on match submission
 - **Flexible querying** — Filter and sort matches by map, mode, queue type, hero, date range, and stats
 - **Match editing** — Update match metadata, player data (names, titles, stats, heroes), and manage screenshots after submission
-- **Player notes** — Attach persistent notes to player usernames (globally, not per-match), surfaced in match details, teammate stats, and player history
+- **Player notes** — Attach persistent notes to player usernames (per-user, not shared), surfaced in match details, teammate stats, and player history
 - **Aggregated analytics** — Win rates, averages, and trends grouped by role, map, mode, hero, or time period (supports dual-axis grouping)
 - **Hero detail stats** — Per-hero stat breakdowns with automatic parsing of percentages, durations (MM:SS), and comma-formatted numbers
 - **Teammate tracking** — Win/loss rates with recurring teammates, with name normalization to handle rank suffixes like "(Bronze)"
@@ -48,13 +49,27 @@ uv sync
 uv run alembic upgrade head
 ```
 
-### 4. Start the server
+### 4. Configure authentication
+
+Set up Google OAuth for multi-user authentication. See [`docs/google-oauth-setup.md`](docs/google-oauth-setup.md) for the full guide.
+
+Add to your `.env` file:
+
+```bash
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-client-secret
+EXTERNAL_URL=http://localhost:8000
+```
+
+When `GOOGLE_CLIENT_ID` is not set, auth is disabled (useful for development with test scripts).
+
+### 5. Start the server
 
 ```bash
 uv run python src/main.py
 ```
 
-The server starts on `http://0.0.0.0:8000` using the Streamable HTTP transport.
+The server starts on `http://0.0.0.0:8000` using the Streamable HTTP transport. The first user to authenticate is automatically promoted to admin.
 
 **CLI options:**
 
@@ -78,6 +93,16 @@ export DATABASE_URL="postgresql+asyncpg://user:password@host:5432/overwatch_stat
 ```
 
 Default: `postgresql+asyncpg://postgres:postgres@localhost:5432/overwatch_stats`
+
+### Authentication
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GOOGLE_CLIENT_ID` | *(empty)* | Google OAuth 2.0 client ID — auth disabled when empty |
+| `GOOGLE_CLIENT_SECRET` | *(empty)* | Google OAuth 2.0 client secret |
+| `EXTERNAL_URL` | `http://localhost:8000` | Base URL of the server (used for OAuth callbacks) |
+
+See [`docs/google-oauth-setup.md`](docs/google-oauth-setup.md) for setup instructions.
 
 ### Docker Compose
 
@@ -109,20 +134,19 @@ Large files (recordings, metadata) can be attached to matches via [tus](https://
 
 ## Connecting to an MCP Client
 
-### Claude Desktop
+When auth is enabled, Claude clients handle the OAuth flow automatically — you'll be redirected to sign in with Google on first connection.
 
-Add to your Claude Desktop MCP config:
+### Claude Desktop / claude.ai
 
-```json
-{
-  "mcpServers": {
-    "overwatch-stats": {
-      "type": "streamable-http",
-      "url": "http://localhost:8000/mcp/"
-    }
-  }
-}
-```
+Add as a custom connector in **Settings > Connectors > Add custom connector** with your server's URL.
+
+### Claude Code
+
+Run `/mcp`, select **Remote (HTTP/SSE)**, and enter the server URL. Your browser opens for Google sign-in.
+
+### Admin Panel
+
+Accessible at `/admin/login`. Redirects to Google OAuth — only users with `is_admin=True` can access. The first registered user is auto-promoted to admin.
 
 ## Tools
 
@@ -308,7 +332,7 @@ Win rates and average stats bucketed by match duration. Parses `MM:SS` duration 
 
 ### `set_player_note`
 
-Set or update a global note for a player by username. Pass an empty string to delete the note.
+Set or update a note for a player by username (per-user, not shared). Pass an empty string to delete the note.
 
 **Parameters:** `player_name` (string), `note` (string)
 
@@ -320,7 +344,7 @@ Get the note for a player by username. Returns `null` if no note exists.
 
 ### `list_player_notes`
 
-List all player notes.
+List all player notes for the current user.
 
 ### `list_match_files`
 
@@ -338,45 +362,31 @@ Delete a file attached to a match (removes from DB and disk).
 
 Delete a match and all associated data (player stats, hero stats, screenshots, files) by UUID. Cascading delete — also removes attached files from disk.
 
-## OpenClaw Integration
-
-The server can notify an [OpenClaw](https://docs.openclaw.ai) agent whenever a new match is submitted. Two modes are available:
-
-- **Agent CLI** (recommended) — runs a turn within an existing session with full conversation history
-- **Webhook** — POSTs to the `/hooks/agent` endpoint for an isolated agent turn
-
-**Quick setup (agent-CLI mode):**
-
-1. Set `OPENCLAW_AGENT_SESSION_ID` in `.env` to target an existing session
-2. Copy `webhook_prompt.j2.example` to `webhook_prompt.j2` and customise
-3. Optionally set `OPENCLAW_AGENT_CHANNEL` and `OPENCLAW_AGENT_REPLY_TO` for delivery
-
-See [OPENCLAW_SETUP.md](OPENCLAW_SETUP.md) for full configuration details including webhook mode.
-
 ## Database Schema
 
-Eight tables (seven with cascading deletes, one standalone):
+Nine tables with cascading deletes rooted at users:
 
 ```
-matches
-  ├── player_stats
-  │     └── hero_stats
-  │           └── hero_stat_values
-  ├── screenshots
-  ├── match_files
-  └── rank_updates (1:1)
-
-player_notes (standalone, keyed by username)
+users
+  ├── matches
+  │     ├── player_stats
+  │     │     └── hero_stats
+  │     │           └── hero_stat_values
+  │     ├── screenshots
+  │     ├── match_files
+  │     └── rank_updates (1:1)
+  └── player_notes
 ```
 
-- **matches** — Map, mode, queue type, result, duration, notes, is_backfill, rank_min, rank_max, is_wide_match, banned_heroes, initial_team_side, score_progression, has_attachments, scoreboard URLs, timestamps
+- **users** — Google sub, email, display name, is_admin, is_disabled, max_stored_matches, timestamps
+- **matches** — User-owned. Map, mode, queue type, result, duration, notes, is_backfill, rank_min, rank_max, is_wide_match, banned_heroes, initial_team_side, score_progression, has_attachments, scoreboard URLs, timestamps
 - **player_stats** — Per-player per-match: team, role, name, title, hero, 6 stat columns, is_self, in_party, joined_at (seconds from match start), swap_snapshots (cumulative stats at hero swaps)
 - **hero_stats** — Links a player_stat to a hero name (1:N for multi-hero support), with `started_at` timestamps
 - **hero_stat_values** — Arbitrary key-value hero stats (label/value/is_featured)
 - **screenshots** — Screenshot URLs attached to a match
 - **match_files** — Files attached to a match via tus upload (filename, size, tus_id)
 - **rank_updates** — Post-match rank update (1:1 with match): rank tier, division, progress %, delta %, demotion protection, modifiers
-- **player_notes** — Global notes attached to player usernames
+- **player_notes** — Per-user notes attached to player usernames (unique per user+player_name)
 
 Migrations are managed with Alembic. To create a new migration after modifying models:
 
@@ -411,7 +421,7 @@ uv run pytest -k "test_filter"             # keyword match
 
 ```
 tests/
-├── conftest.py            # Testcontainers setup, DB override, per-test cleanup
+├── conftest.py            # Testcontainers setup, DB override, auth context, per-test cleanup
 ├── factories.py           # Test data helpers (make_players, create_test_match)
 ├── test_match_crud.py     # Submit, get, edit, delete (108 tests)
 ├── test_list_matches.py   # Filtering, sorting, pagination (25 tests)
@@ -419,7 +429,9 @@ tests/
 ├── test_player_notes.py   # Player notes CRUD and integration (11 tests)
 ├── test_match_files.py    # File attachments, tusd hooks, storage limits (20 tests)
 ├── test_screenshots.py    # Screenshot upload and serving (11 tests)
-└── test_webhook.py        # Webhook and agent-CLI notification (34 tests)
+├── test_user_isolation.py # Multi-user data isolation for every tool (18 tests)
+├── test_auth.py           # OAuth provider, token management, user creation (19 tests)
+└── test_admin.py          # Admin panel routes and access control (13 tests)
 ```
 
 ## Project Structure
@@ -428,23 +440,25 @@ tests/
 .
 ├── src/
 │   ├── main.py                # MCP server — all tools and helpers
-│   ├── models.py              # SQLAlchemy ORM models
+│   ├── models.py              # SQLAlchemy ORM models (User, Match, PlayerStat, etc.)
 │   ├── db.py                  # Database engine and session factory
+│   ├── auth.py                # OAuth 2.1 provider with Google as IdP
+│   ├── admin.py               # Admin panel routes (user management)
 │   ├── scoreboard.py          # Scoreboard PNG image generation
-│   ├── telegram.py            # Telegram bot integration for scoreboard delivery
 │   ├── tusd_hooks.py          # tusd webhook handlers for file upload lifecycle
-│   └── webhook.py             # OpenClaw integration (agent-CLI and webhook modes)
-├── docs/                      # Setup guides (tusd, client upload)
-├── tests/                     # Test suite (267 tests, requires Docker)
+│   └── templates/admin/       # Jinja2 templates for admin panel
+├── scripts/
+│   ├── export_data.py         # Export matches and notes to JSON
+│   ├── import_data.py         # Import JSON data with user ownership
+│   └── test_auth.py           # Manual OAuth flow testing script
+├── docs/                      # Setup guides (tusd, client upload, Google OAuth)
+├── tests/                     # Test suite (284 tests, requires Docker)
 ├── alembic/
 │   ├── env.py                 # Async migration environment
-│   └── versions/              # Migration scripts
+│   └── versions/              # Migration scripts (19 migrations)
 ├── heroes.txt                 # Canonical hero name list (used for fuzzy matching)
 ├── maps.txt                   # Canonical map name list (used for fuzzy matching)
-├── migrate_normalize_names.py # Data migration: normalize existing hero/map names
 ├── alembic.ini                # Alembic configuration
-├── webhook_prompt.j2.example  # Example Jinja2 template for notification prompt
-├── OPENCLAW_SETUP.md          # OpenClaw integration setup guide
 ├── docker-compose.yml         # PostgreSQL service
 └── pyproject.toml             # Project metadata and dependencies
 ```
@@ -454,12 +468,11 @@ tests/
 For production deployment on a VPS:
 
 1. Set `DATABASE_URL` to your production Postgres instance
-2. Run `uv run alembic upgrade head` to apply migrations
-3. Start with `uv run python src/main.py`
-4. Use systemd or similar to keep the process running
-5. Put a reverse proxy (nginx/caddy) in front for TLS
-
-**Note:** The server currently has no authentication. Restrict access via firewall, VPN, or add an auth layer before exposing publicly.
+2. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `EXTERNAL_URL` for authentication
+3. Run `uv run alembic upgrade head` to apply migrations
+4. Start with `uv run python src/main.py`
+5. Use systemd or similar to keep the process running
+6. Put a reverse proxy (nginx/caddy) in front for TLS
 
 **Reverse proxy body size:** Screenshot uploads send base64-encoded images in the request body, which can be 10-20MB+ for 4K screenshots. Most reverse proxies reject this by default (nginx allows only 1MB). Increase the limit to allow uploads:
 

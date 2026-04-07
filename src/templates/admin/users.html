@@ -1,0 +1,51 @@
+{% extends "admin/base.html" %}
+{% block title %}Users{% endblock %}
+{% block content %}
+<h2>Users ({{ users|length }})</h2>
+<table>
+    <thead>
+        <tr>
+            <th>Email</th>
+            <th>Display Name</th>
+            <th>Status</th>
+            <th>Matches</th>
+            <th>Quota</th>
+            <th>Last Login</th>
+            <th>Created</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for u in users %}
+        <tr>
+            <td>{{ u.email }}</td>
+            <td>{{ u.display_name or '-' }}</td>
+            <td>
+                {% if u.is_admin %}<span class="badge badge-admin">Admin</span>{% endif %}
+                {% if u.is_disabled %}<span class="badge badge-disabled">Disabled</span>{% else %}<span class="badge badge-active">Active</span>{% endif %}
+            </td>
+            <td>{{ u.match_count }}</td>
+            <td>
+                <form class="inline" method="post" action="/admin/users/{{ u.id }}/quota">
+                    <input type="number" name="max_stored_matches" value="{{ u.max_stored_matches }}" min="0" title="0 = unlimited">
+                    <button type="submit" class="btn btn-primary btn-sm">Set</button>
+                </form>
+            </td>
+            <td>{{ u.last_login_at.strftime('%Y-%m-%d %H:%M') if u.last_login_at else 'Never' }}</td>
+            <td>{{ u.created_at.strftime('%Y-%m-%d') if u.created_at else '-' }}</td>
+            <td>
+                <form class="inline" method="post" action="/admin/users/{{ u.id }}/toggle-admin">
+                    <button type="submit" class="btn btn-warning btn-sm">{{ 'Remove Admin' if u.is_admin else 'Make Admin' }}</button>
+                </form>
+                <form class="inline" method="post" action="/admin/users/{{ u.id }}/disable">
+                    <button type="submit" class="btn {{ 'btn-primary' if u.is_disabled else 'btn-danger' }} btn-sm">{{ 'Enable' if u.is_disabled else 'Disable' }}</button>
+                </form>
+                <form class="inline" method="post" action="/admin/users/{{ u.id }}/delete" onsubmit="return confirm('Delete user {{ u.email }} and ALL their data?')">
+                    <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

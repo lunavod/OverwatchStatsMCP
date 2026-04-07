@@ -1,16 +1,44 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, Uuid, func
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from db import Base
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    google_sub: Mapped[str] = mapped_column(String, unique=True)
+    email: Mapped[str] = mapped_column(String, unique=True)
+    display_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    is_disabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    max_stored_matches: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    last_login_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    matches: Mapped[list["Match"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
+    player_notes: Mapped[list["PlayerNote"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class Match(Base):
     __tablename__ = "matches"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
     map_name: Mapped[str] = mapped_column(String)
     duration: Mapped[str] = mapped_column(String)
     mode: Mapped[str] = mapped_column(String)
@@ -45,6 +73,7 @@ class Match(Base):
     rank_update: Mapped["RankUpdate | None"] = relationship(
         back_populates="match", cascade="all, delete-orphan", uselist=False
     )
+    user: Mapped["User"] = relationship(back_populates="matches")
 
 
 class PlayerStat(Base):
@@ -125,13 +154,20 @@ class RankUpdate(Base):
 
 class PlayerNote(Base):
     __tablename__ = "player_notes"
+    __table_args__ = (
+        UniqueConstraint("user_id", "player_name", name="uq_player_notes_user_player"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    player_name: Mapped[str] = mapped_column(String, unique=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    player_name: Mapped[str] = mapped_column(String)
     note: Mapped[str] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+    user: Mapped["User"] = relationship(back_populates="player_notes")
 
 
 class Screenshot(Base):
