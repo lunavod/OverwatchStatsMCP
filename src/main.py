@@ -17,7 +17,7 @@ import db
 from mcp.server.fastmcp import FastMCP
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
-from models import HeroStat, HeroStatValue, Match, MatchFile, PlayerNote, PlayerStat, RankUpdate, Screenshot
+from models import HeroSRUpdate, HeroStat, HeroStatValue, Match, MatchFile, PlayerNote, PlayerStat, RankUpdate, Screenshot
 from scoreboard import render_scoreboard
 from tusd_hooks import tusd_hook
 from admin import (
@@ -336,7 +336,8 @@ async def submit_match(
         score_progression: Optional array of round scores as "X:Y" strings (e.g. ["1:0", "1:1", "2:1"])
         rank_update: Optional rank update after the match, with keys:
             rank (string, e.g. "GOLD"), division (int 1-5), progress_pct (int 0-100),
-            delta_pct (int, signed), demotion_protection (bool), modifiers (array of strings)
+            delta_pct (int, signed), demotion_protection (bool), modifiers (array of strings),
+            hero_sr (optional array of {hero: string, sr: int, delta: int|null})
     """
     # --- Validate & normalize map name ---
     normalized_map = normalize_map_name(map_name)
@@ -457,7 +458,7 @@ async def submit_match(
                 session.add(Screenshot(match=match, url=path))
 
             if rank_update:
-                session.add(RankUpdate(
+                ru = RankUpdate(
                     match=match,
                     rank=rank_update["rank"].upper(),
                     division=rank_update["division"],
@@ -465,7 +466,15 @@ async def submit_match(
                     delta_pct=rank_update["delta_pct"],
                     demotion_protection=rank_update.get("demotion_protection", False),
                     modifiers=rank_update.get("modifiers"),
-                ))
+                )
+                session.add(ru)
+                for hs in rank_update.get("hero_sr") or []:
+                    session.add(HeroSRUpdate(
+                        rank_update=ru,
+                        hero=hs["hero"],
+                        sr=hs["sr"],
+                        delta=hs.get("delta"),
+                    ))
 
     match_id_str = str(match.id)
     match_result = {"match_id": match_id_str}
@@ -620,7 +629,7 @@ async def get_match(match_id: str) -> dict:
                 .joinedload(PlayerStat.hero_stats)
                 .joinedload(HeroStat.values),
                 joinedload(Match.screenshots),
-                joinedload(Match.rank_update),
+                joinedload(Match.rank_update).joinedload(RankUpdate.hero_sr),
             )
         )
         result = await session.execute(stmt)
@@ -644,6 +653,10 @@ async def get_match(match_id: str) -> dict:
             "delta_pct": ru.delta_pct,
             "demotion_protection": ru.demotion_protection,
             "modifiers": ru.modifiers,
+            "hero_sr": [
+                {"hero": hs.hero, "sr": hs.sr, "delta": hs.delta}
+                for hs in ru.hero_sr
+            ] or None,
         }
 
     return {
@@ -1816,7 +1829,8 @@ async def edit_match(
         score_progression: New score progression as array of "X:Y" strings (pass empty list to clear)
         rank_update: New rank update dict (pass empty dict {} to remove). Keys:
             rank (string, e.g. "GOLD"), division (int 1-5), progress_pct (int 0-100),
-            delta_pct (int, signed), demotion_protection (bool), modifiers (array of strings)
+            delta_pct (int, signed), demotion_protection (bool), modifiers (array of strings),
+            hero_sr (optional array of {hero: string, sr: int, delta: int|null} — replaces all hero SR entries when present)
         screenshots_to_add: List of screenshot URLs to attach
         screenshot_uploads: List of base64 image uploads, each with keys:
             data (base64-encoded image bytes), filename (optional, used for extension detection)
@@ -1883,7 +1897,7 @@ async def edit_match(
         async with session.begin():
             load_options = [joinedload(Match.screenshots)]
             if rank_update is not None:
-                load_options.append(joinedload(Match.rank_update))
+                load_options.append(joinedload(Match.rank_update).joinedload(RankUpdate.hero_sr))
             if player_edits:
                 load_options.append(
                     joinedload(Match.player_stats)
@@ -1954,8 +1968,9 @@ async def edit_match(
                         match.rank_update.delta_pct = rank_update["delta_pct"]
                         match.rank_update.demotion_protection = rank_update.get("demotion_protection", False)
                         match.rank_update.modifiers = rank_update.get("modifiers")
+                        ru_obj = match.rank_update
                     else:
-                        session.add(RankUpdate(
+                        ru_obj = RankUpdate(
                             match=match,
                             rank=rank_update["rank"].upper(),
                             division=rank_update["division"],
@@ -1963,7 +1978,18 @@ async def edit_match(
                             delta_pct=rank_update["delta_pct"],
                             demotion_protection=rank_update.get("demotion_protection", False),
                             modifiers=rank_update.get("modifiers"),
-                        ))
+                        )
+                        session.add(ru_obj)
+                    if "hero_sr" in rank_update:
+                        for old in list(ru_obj.hero_sr):
+                            await session.delete(old)
+                        for hs in rank_update["hero_sr"] or []:
+                            session.add(HeroSRUpdate(
+                                rank_update=ru_obj,
+                                hero=hs["hero"],
+                                sr=hs["sr"],
+                                delta=hs.get("delta"),
+                            ))
                 else:
                     # Empty dict = remove rank update
                     if match.rank_update:

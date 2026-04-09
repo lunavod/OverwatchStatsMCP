@@ -192,6 +192,7 @@ Record a completed match with all player stats.
 | `delta_pct`           | int      | Yes      | Progress change (signed, e.g. +27 or -15)|
 | `demotion_protection` | bool     | No       | Whether demotion protection is active (default false) |
 | `modifiers`           | string[] | No       | Match modifiers (e.g. `["VICTORY", "UPHILL BATTLE"]`) |
+| `hero_sr`             | object[] | No       | Per-hero SR updates: `[{hero, sr, delta}]` where `delta` is nullable |
 
 **Player object:**
 
@@ -375,6 +376,7 @@ users
   │     ├── screenshots
   │     ├── match_files
   │     └── rank_updates (1:1)
+  │           └── hero_sr_updates
   └── player_notes
 ```
 
@@ -386,6 +388,7 @@ users
 - **screenshots** — Screenshot URLs attached to a match
 - **match_files** — Files attached to a match via tus upload (filename, size, tus_id)
 - **rank_updates** — Post-match rank update (1:1 with match): rank tier, division, progress %, delta %, demotion protection, modifiers
+- **hero_sr_updates** — Per-hero SR values within a rank update: hero name, SR, delta (nullable)
 - **player_notes** — Per-user notes attached to player usernames (unique per user+player_name)
 
 Migrations are managed with Alembic. To create a new migration after modifying models:

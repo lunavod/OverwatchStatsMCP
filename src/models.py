@@ -150,6 +150,23 @@ class RankUpdate(Base):
     modifiers: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
 
     match: Mapped["Match"] = relationship(back_populates="rank_update")
+    hero_sr: Mapped[list["HeroSRUpdate"]] = relationship(
+        back_populates="rank_update", cascade="all, delete-orphan"
+    )
+
+
+class HeroSRUpdate(Base):
+    __tablename__ = "hero_sr_updates"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    rank_update_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("rank_updates.id", ondelete="CASCADE")
+    )
+    hero: Mapped[str] = mapped_column(String)
+    sr: Mapped[int] = mapped_column(Integer)
+    delta: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    rank_update: Mapped["RankUpdate"] = relationship(back_populates="hero_sr")
 
 
 class PlayerNote(Base):

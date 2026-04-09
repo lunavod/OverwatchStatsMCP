@@ -617,6 +617,41 @@ class TestSubmitMatch:
         match = await get_match(match_id)
         assert match["rank_update"]["rank"] == "GOLD"
 
+    async def test_submit_with_hero_sr(self):
+        from main import get_match
+
+        match_id = await create_test_match(rank_update={
+            "rank": "GOLD",
+            "division": 3,
+            "progress_pct": 72,
+            "delta_pct": 17,
+            "hero_sr": [
+                {"hero": "Moira", "sr": 1846, "delta": 17},
+                {"hero": "Mercy", "sr": 1504, "delta": None},
+            ],
+        })
+        match = await get_match(match_id)
+        ru = match["rank_update"]
+        assert ru["hero_sr"] is not None
+        assert len(ru["hero_sr"]) == 2
+        heroes = {h["hero"]: h for h in ru["hero_sr"]}
+        assert heroes["Moira"]["sr"] == 1846
+        assert heroes["Moira"]["delta"] == 17
+        assert heroes["Mercy"]["sr"] == 1504
+        assert heroes["Mercy"]["delta"] is None
+
+    async def test_submit_rank_update_without_hero_sr(self):
+        from main import get_match
+
+        match_id = await create_test_match(rank_update={
+            "rank": "GOLD",
+            "division": 3,
+            "progress_pct": 24,
+            "delta_pct": 27,
+        })
+        match = await get_match(match_id)
+        assert match["rank_update"]["hero_sr"] is None
+
 
 # ---------------------------------------------------------------------------
 # get_match
@@ -1254,6 +1289,92 @@ class TestEditMatch:
         match = await get_match(match_id)
         assert match["rank_update"] is None
 
+    async def test_add_hero_sr_via_edit(self):
+        from main import edit_match, get_match
+
+        match_id = await create_test_match(rank_update={
+            "rank": "GOLD",
+            "division": 3,
+            "progress_pct": 24,
+            "delta_pct": 27,
+        })
+        await edit_match(match_id, rank_update={
+            "rank": "GOLD",
+            "division": 3,
+            "progress_pct": 24,
+            "delta_pct": 27,
+            "hero_sr": [{"hero": "Ana", "sr": 2000, "delta": 15}],
+        })
+        match = await get_match(match_id)
+        assert len(match["rank_update"]["hero_sr"]) == 1
+        assert match["rank_update"]["hero_sr"][0]["hero"] == "Ana"
+
+    async def test_replace_hero_sr_via_edit(self):
+        from main import edit_match, get_match
+
+        match_id = await create_test_match(rank_update={
+            "rank": "GOLD",
+            "division": 3,
+            "progress_pct": 50,
+            "delta_pct": 10,
+            "hero_sr": [
+                {"hero": "Ana", "sr": 2000, "delta": 10},
+                {"hero": "Moira", "sr": 1800, "delta": 10},
+            ],
+        })
+        await edit_match(match_id, rank_update={
+            "rank": "GOLD",
+            "division": 3,
+            "progress_pct": 50,
+            "delta_pct": 10,
+            "hero_sr": [{"hero": "Mercy", "sr": 1900, "delta": 5}],
+        })
+        match = await get_match(match_id)
+        assert len(match["rank_update"]["hero_sr"]) == 1
+        assert match["rank_update"]["hero_sr"][0]["hero"] == "Mercy"
+
+    async def test_clear_hero_sr_via_edit(self):
+        from main import edit_match, get_match
+
+        match_id = await create_test_match(rank_update={
+            "rank": "GOLD",
+            "division": 3,
+            "progress_pct": 50,
+            "delta_pct": 10,
+            "hero_sr": [{"hero": "Ana", "sr": 2000, "delta": 10}],
+        })
+        await edit_match(match_id, rank_update={
+            "rank": "GOLD",
+            "division": 3,
+            "progress_pct": 50,
+            "delta_pct": 10,
+            "hero_sr": [],
+        })
+        match = await get_match(match_id)
+        assert match["rank_update"]["hero_sr"] is None
+
+    async def test_edit_rank_update_preserves_hero_sr_when_key_absent(self):
+        from main import edit_match, get_match
+
+        match_id = await create_test_match(rank_update={
+            "rank": "GOLD",
+            "division": 3,
+            "progress_pct": 50,
+            "delta_pct": 10,
+            "hero_sr": [{"hero": "Ana", "sr": 2000, "delta": 10}],
+        })
+        # Edit rank fields without mentioning hero_sr — should preserve it
+        await edit_match(match_id, rank_update={
+            "rank": "PLATINUM",
+            "division": 1,
+            "progress_pct": 5,
+            "delta_pct": 55,
+        })
+        match = await get_match(match_id)
+        assert match["rank_update"]["rank"] == "PLATINUM"
+        assert len(match["rank_update"]["hero_sr"]) == 1
+        assert match["rank_update"]["hero_sr"][0]["hero"] == "Ana"
+
 
 # ---------------------------------------------------------------------------
 # delete_match
@@ -1352,6 +1473,32 @@ class TestDeleteMatch:
             count = (
                 await session.execute(
                     select(func.count()).select_from(RankUpdate)
+                )
+            ).scalar_one()
+        assert count == 0
+
+    async def test_cascade_deletes_hero_sr_updates(self):
+        from sqlalchemy import func, select
+
+        from main import delete_match
+        from models import HeroSRUpdate
+
+        match_id = await create_test_match(rank_update={
+            "rank": "GOLD",
+            "division": 3,
+            "progress_pct": 24,
+            "delta_pct": 27,
+            "hero_sr": [
+                {"hero": "Moira", "sr": 1846, "delta": 17},
+                {"hero": "Mercy", "sr": 1504},
+            ],
+        })
+        await delete_match(match_id)
+
+        async with db.async_session() as session:
+            count = (
+                await session.execute(
+                    select(func.count()).select_from(HeroSRUpdate)
                 )
             ).scalar_one()
         assert count == 0
