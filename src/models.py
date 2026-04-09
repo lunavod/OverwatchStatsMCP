@@ -217,3 +217,38 @@ class MatchFile(Base):
     )
 
     match: Mapped["Match"] = relationship(back_populates="files")
+
+
+# ---------------------------------------------------------------------------
+# OAuth persistence (survive server restarts)
+# ---------------------------------------------------------------------------
+
+
+class OAuthClient(Base):
+    __tablename__ = "oauth_clients"
+
+    client_id: Mapped[str] = mapped_column(String, primary_key=True)
+    client_info_json: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class OAuthAccessToken(Base):
+    __tablename__ = "oauth_access_tokens"
+
+    token: Mapped[str] = mapped_column(String, primary_key=True)
+    client_id: Mapped[str] = mapped_column(String)
+    scopes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    expires_at: Mapped[int] = mapped_column(Integer)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid)
+    email: Mapped[str] = mapped_column(String)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class OAuthRefreshToken(Base):
+    __tablename__ = "oauth_refresh_tokens"
+
+    token: Mapped[str] = mapped_column(String, primary_key=True)
+    client_id: Mapped[str] = mapped_column(String)
+    scopes: Mapped[list[str]] = mapped_column(JSON, default=list)

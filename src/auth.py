@@ -5,6 +5,10 @@ acting as an OAuth proxy: our /authorize redirects to Google, and our callback
 exchanges the Google auth code for a Google ID token, creates/finds the local
 user, and issues our own access token.
 
+Clients, access tokens, and refresh tokens are persisted in the database so
+that sessions survive server restarts.  Authorization codes and pending auth
+flows remain in-memory (they are short-lived, seconds to minutes).
+
 Environment variables:
     GOOGLE_CLIENT_ID — Google Cloud Console OAuth 2.0 client ID
     GOOGLE_CLIENT_SECRET — Google Cloud Console OAuth 2.0 client secret
@@ -18,12 +22,12 @@ import time
 import uuid
 
 import httpx
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse
 
 import db
-from models import User
+from models import OAuthAccessToken, OAuthClient, OAuthRefreshToken, User
 from mcp.server.auth.provider import (
     AccessToken,
     AuthorizationCode,
@@ -58,11 +62,8 @@ class OwAuthorizationCode(AuthorizationCode):
     is_admin: bool = False
 
 
-# In-memory stores (sufficient for single-instance deployments)
-_clients: dict[str, OAuthClientInformationFull] = {}
+# In-memory stores for short-lived / in-flight data only
 _auth_codes: dict[str, OwAuthorizationCode] = {}
-_access_tokens: dict[str, OwAccessToken] = {}
-_refresh_tokens: dict[str, RefreshToken] = {}
 
 # Pending authorization flows: state → (client, params)
 _pending_auths: dict[str, tuple[OAuthClientInformationFull, AuthorizationParams]] = {}
@@ -75,12 +76,29 @@ class OwAuthProvider:
     """OAuth authorization server provider that delegates to Google for authentication."""
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
-        return _clients.get(client_id)
+        async with db.async_session() as session:
+            row = (await session.execute(
+                select(OAuthClient).where(OAuthClient.client_id == client_id)
+            )).scalar_one_or_none()
+        if row:
+            return OAuthClientInformationFull.model_validate(row.client_info_json)
+        return None
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
         if not client_info.client_id:
             client_info.client_id = secrets.token_hex(16)
-        _clients[client_info.client_id] = client_info
+        async with db.async_session() as session:
+            async with session.begin():
+                existing = (await session.execute(
+                    select(OAuthClient).where(OAuthClient.client_id == client_info.client_id)
+                )).scalar_one_or_none()
+                if existing:
+                    existing.client_info_json = client_info.model_dump(mode="json")
+                else:
+                    session.add(OAuthClient(
+                        client_id=client_info.client_id,
+                        client_info_json=client_info.model_dump(mode="json"),
+                    ))
 
     async def authorize(
         self, client: OAuthClientInformationFull, params: AuthorizationParams
@@ -117,21 +135,22 @@ class OwAuthProvider:
         refresh_token_str = secrets.token_urlsafe(32)
         expires_in = 3600 * 24 * 7  # 7 days
 
-        _access_tokens[access_token_str] = OwAccessToken(
-            token=access_token_str,
-            client_id=authorization_code.client_id,
-            scopes=authorization_code.scopes,
-            expires_at=int(time.time()) + expires_in,
-            user_id=authorization_code.user_id,
-            email=authorization_code.email,
-            is_admin=authorization_code.is_admin,
-        )
-
-        _refresh_tokens[refresh_token_str] = RefreshToken(
-            token=refresh_token_str,
-            client_id=authorization_code.client_id,
-            scopes=authorization_code.scopes,
-        )
+        async with db.async_session() as session:
+            async with session.begin():
+                session.add(OAuthAccessToken(
+                    token=access_token_str,
+                    client_id=authorization_code.client_id,
+                    scopes=authorization_code.scopes,
+                    expires_at=int(time.time()) + expires_in,
+                    user_id=authorization_code.user_id,
+                    email=authorization_code.email,
+                    is_admin=authorization_code.is_admin,
+                ))
+                session.add(OAuthRefreshToken(
+                    token=refresh_token_str,
+                    client_id=authorization_code.client_id,
+                    scopes=authorization_code.scopes,
+                ))
 
         # Clean up the used auth code
         _auth_codes.pop(authorization_code.code, None)
@@ -147,9 +166,16 @@ class OwAuthProvider:
     async def load_refresh_token(
         self, client: OAuthClientInformationFull, refresh_token: str
     ) -> RefreshToken | None:
-        rt = _refresh_tokens.get(refresh_token)
-        if rt and rt.client_id == client.client_id:
-            return rt
+        async with db.async_session() as session:
+            row = (await session.execute(
+                select(OAuthRefreshToken).where(OAuthRefreshToken.token == refresh_token)
+            )).scalar_one_or_none()
+        if row and row.client_id == client.client_id:
+            return RefreshToken(
+                token=row.token,
+                client_id=row.client_id,
+                scopes=row.scopes,
+            )
         return None
 
     async def exchange_refresh_token(
@@ -159,13 +185,12 @@ class OwAuthProvider:
         scopes: list[str],
     ) -> OAuthToken:
         # Find the old access token for this client to get user info
-        old_token = None
-        for t in _access_tokens.values():
-            if t.client_id == client.client_id:
-                old_token = t
-                break
+        async with db.async_session() as session:
+            old_row = (await session.execute(
+                select(OAuthAccessToken).where(OAuthAccessToken.client_id == client.client_id)
+            )).scalars().first()
 
-        if not old_token:
+        if not old_row:
             from mcp.server.auth.provider import TokenError
             raise TokenError(error="invalid_grant", error_description="No associated access token found")
 
@@ -174,25 +199,29 @@ class OwAuthProvider:
         new_refresh = secrets.token_urlsafe(32)
         expires_in = 3600 * 24 * 7
 
-        _access_tokens[new_access] = OwAccessToken(
-            token=new_access,
-            client_id=client.client_id,
-            scopes=scopes or refresh_token.scopes,
-            expires_at=int(time.time()) + expires_in,
-            user_id=old_token.user_id,
-            email=old_token.email,
-            is_admin=old_token.is_admin,
-        )
-
-        _refresh_tokens[new_refresh] = RefreshToken(
-            token=new_refresh,
-            client_id=client.client_id,
-            scopes=scopes or refresh_token.scopes,
-        )
-
-        # Remove old tokens
-        _access_tokens.pop(old_token.token, None)
-        _refresh_tokens.pop(refresh_token.token, None)
+        async with db.async_session() as session:
+            async with session.begin():
+                session.add(OAuthAccessToken(
+                    token=new_access,
+                    client_id=client.client_id,
+                    scopes=scopes or refresh_token.scopes,
+                    expires_at=int(time.time()) + expires_in,
+                    user_id=old_row.user_id,
+                    email=old_row.email,
+                    is_admin=old_row.is_admin,
+                ))
+                session.add(OAuthRefreshToken(
+                    token=new_refresh,
+                    client_id=client.client_id,
+                    scopes=scopes or refresh_token.scopes,
+                ))
+                # Remove old tokens
+                await session.execute(
+                    delete(OAuthAccessToken).where(OAuthAccessToken.token == old_row.token)
+                )
+                await session.execute(
+                    delete(OAuthRefreshToken).where(OAuthRefreshToken.token == refresh_token.token)
+                )
 
         return OAuthToken(
             access_token=new_access,
@@ -203,17 +232,44 @@ class OwAuthProvider:
         )
 
     async def load_access_token(self, token: str) -> OwAccessToken | None:
-        at = _access_tokens.get(token)
-        if at and at.expires_at and at.expires_at < int(time.time()):
-            _access_tokens.pop(token, None)
+        async with db.async_session() as session:
+            row = (await session.execute(
+                select(OAuthAccessToken).where(OAuthAccessToken.token == token)
+            )).scalar_one_or_none()
+
+        if not row:
             return None
-        return at
+
+        if row.expires_at and row.expires_at < int(time.time()):
+            # Expired — clean up
+            async with db.async_session() as session:
+                async with session.begin():
+                    await session.execute(
+                        delete(OAuthAccessToken).where(OAuthAccessToken.token == token)
+                    )
+            return None
+
+        return OwAccessToken(
+            token=row.token,
+            client_id=row.client_id,
+            scopes=row.scopes,
+            expires_at=row.expires_at,
+            user_id=row.user_id,
+            email=row.email,
+            is_admin=row.is_admin,
+        )
 
     async def revoke_token(self, token: OwAccessToken | RefreshToken) -> None:
-        if isinstance(token, OwAccessToken):
-            _access_tokens.pop(token.token, None)
-        elif isinstance(token, RefreshToken):
-            _refresh_tokens.pop(token.token, None)
+        async with db.async_session() as session:
+            async with session.begin():
+                if isinstance(token, OwAccessToken):
+                    await session.execute(
+                        delete(OAuthAccessToken).where(OAuthAccessToken.token == token.token)
+                    )
+                elif isinstance(token, RefreshToken):
+                    await session.execute(
+                        delete(OAuthRefreshToken).where(OAuthRefreshToken.token == token.token)
+                    )
 
 
 async def _get_or_create_user(google_sub: str, email: str, name: str | None) -> User:

@@ -365,7 +365,7 @@ Delete a match and all associated data (player stats, hero stats, screenshots, f
 
 ## Database Schema
 
-Nine tables with cascading deletes rooted at users:
+User data tables with cascading deletes rooted at users, plus standalone OAuth tables:
 
 ```
 users
@@ -378,6 +378,10 @@ users
   │     └── rank_updates (1:1)
   │           └── hero_sr_updates
   └── player_notes
+
+oauth_clients
+oauth_access_tokens
+oauth_refresh_tokens
 ```
 
 - **users** — Google sub, email, display name, is_admin, is_disabled, max_stored_matches, timestamps
@@ -390,6 +394,9 @@ users
 - **rank_updates** — Post-match rank update (1:1 with match): rank tier, division, progress %, delta %, demotion protection, modifiers
 - **hero_sr_updates** — Per-hero SR values within a rank update: hero name, SR, delta (nullable)
 - **player_notes** — Per-user notes attached to player usernames (unique per user+player_name)
+- **oauth_clients** — Registered OAuth client applications (persisted across restarts)
+- **oauth_access_tokens** — Issued access tokens with user identity (client_id, scopes, expiry, user_id)
+- **oauth_refresh_tokens** — Issued refresh tokens for token rotation (client_id, scopes)
 
 Migrations are managed with Alembic. To create a new migration after modifying models:
 
